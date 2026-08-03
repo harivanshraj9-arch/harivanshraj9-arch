@@ -1,0 +1,43 @@
+{
+  "summary": "First-finish smoke test on POLARIS/MVVNL Master Dashboard. Backend endpoints all pass (list, filter, search, stats, categories, PATCH star, POST/GET activity, 404 handling). Frontend loads, KPIs correct (Total=19, Categories=7), category filter pills, search live filter, star toggle KPI update, sidebar nav filter, theme toggle with localStorage 'polaris-theme' persistence, and activity feed rendering all work. Two minor spec-vs-impl deltas noted (see failed).",
+  "tested_scope": ["backend", "frontend", "integration"],
+  "passed": [
+    "GET /api/resources returns 19 with correct schema (id, sno, title, description, category, kind, url, starred, created_at)",
+    "GET /api/resources?category=Finance returns 4",
+    "GET /api/resources?q=salary returns 2 (Final Salary Sheet 2026, Salary Sheet)",
+    "GET /api/stats returns total_resources=19, starred=0, categories=7, by_category(7), by_kind(4: spreadsheet=12, document=5, dashboard=1, folder=1), activity_count",
+    "GET /api/categories returns 7 sorted categories",
+    "POST /api/activity with valid resource_id creates log; GET /api/activity returns descending order",
+    "PATCH /api/resources/{id} {starred:true} toggles and persists (verified via GET)",
+    "PATCH invalid id -> 404; POST /api/activity invalid resource_id -> 404",
+    "Frontend dashboard-page loads; hero, KPI cards render",
+    "KPI Total Resources=19, Categories=7 rendered",
+    "Category filter pill 'finance' filters library to 4 cards with count badges visible on all pills",
+    "Sidebar nav 'nav-operations' filters resources (4 Operations grid cards + 1 pinned starred STYRA in starred-section = 5 visible cards total; consistent)",
+    "Search input 'salary' live-filters to 2 cards; search-clear resets",
+    "Star toggle updates card state AND KPI Starred count (0 -> 1)",
+    "Theme toggle switches dark/light and persists in localStorage key 'polaris-theme'",
+    "Clicking Open on resource card logs activity that appears in activity-list feed"
+  ],
+  "failed": [
+    {
+      "area": "Frontend - resource open button",
+      "issue": "open-resource-{sno} is rendered as <button> element (likely uses window.open in onClick) rather than <a target=\"_blank\" rel=\"noopener noreferrer\">. Spec explicitly asks to verify target/rel attributes. Behavior may work but is not verifiable via anchor attributes and can be blocked by popup blockers.",
+      "evidence": "el.evaluate returned {tag:'BUTTON', target:null, rel:null, href:null} for [data-testid=\"open-resource-1\"]",
+      "priority": "MEDIUM"
+    },
+    {
+      "area": "Frontend - filter pill testid casing",
+      "issue": "Spec lists testids as filter-Finance/filter-HR (PascalCase), but implementation uses lowercase: filter-all, filter-operations, filter-finance, filter-hr, filter-inventory, filter-reports, filter-legal, filter-customer. Same for nav-* (all lowercase). Not a bug per se, but a spec/impl mismatch that may confuse downstream tests.",
+      "evidence": "DOM enumeration returned filter-finance (not filter-Finance); filter-Finance selector timed out",
+      "priority": "LOW"
+    }
+  ],
+  "action_items": [
+    "Optional: change open-resource-{sno} to an <a href={url} target=\"_blank\" rel=\"noopener noreferrer\"> (styled as button) so target/rel are verifiable and popup blockers do not interfere. Keep the onClick to log activity.",
+    "Optional: align data-testid casing to match documented spec (Finance vs finance) or update the spec/docs to lowercase. Consistency across all filter-* and nav-* testids is preferred."
+  ],
+  "success_rate": {"backend": "100%", "frontend": "94%"},
+  "retest_needed": false,
+  "full_testing_deferred": true
+}
