@@ -1,0 +1,104 @@
+{
+  "project_name": "POLARIS / MVVNL Master Dashboard",
+  "theme_strategy": "Supports both Light and Dark modes. Dark mode emphasizes the 'Electric/Neon' vibe, Light mode focuses on 'Crisp High-Contrast' with vivid accents.",
+  "typography": {
+    "primary_heading_font": "Outfit",
+    "secondary_body_font": "Manrope",
+    "anti_pattern_reminder": "DO NOT use Inter or Roboto. Keep headings energetic.",
+    "hierarchy": {
+      "h1_hero": "text-4xl sm:text-5xl font-black tracking-tight",
+      "h2_section": "text-2xl sm:text-3xl font-bold tracking-tight",
+      "h3_card": "text-lg font-semibold tracking-tight",
+      "body": "text-sm sm:text-base leading-relaxed",
+      "labels": "text-xs font-bold uppercase tracking-[0.15em]"
+    }
+  },
+  "colors": {
+    "archetype": "The Performance Pro mixed with Vibrant Play",
+    "dark_mode": {
+      "background": "#0A0A0A",
+      "surface": "#141414",
+      "surface_glass": "rgba(10, 10, 10, 0.7)",
+      "border": "rgba(255, 255, 255, 0.1)",
+      "primary_accent": "#0055FF",
+      "secondary_accent": "#FF3B30",
+      "energy_highlight": "#CCFF00",
+      "text_main": "#F3F4F6",
+      "text_muted": "#9CA3AF"
+    },
+    "light_mode": {
+      "background": "#F8F9FA",
+      "surface": "#FFFFFF",
+      "surface_glass": "rgba(255, 255, 255, 0.8)",
+      "border": "rgba(0, 0, 0, 0.08)",
+      "primary_accent": "#0055FF",
+      "secondary_accent": "#FF3B30",
+      "energy_highlight": "#FFB800",
+      "text_main": "#111827",
+      "text_muted": "#4B5563"
+    },
+    "forbidden_colors": ["#1B93A4", "purple", "violet"]
+  },
+  "visual_enhancers": {
+    "glassmorphism": "Use backdrop-blur-xl combined with surface_glass color for Sticky Headers, Top Nav, and Quick Access Floating Bar. Add 1px inner border for clarity.",
+    "neumorphism": "Do not use soft neumorphism. Use 'Tactile Variant': flat surfaces with 1px crisp borders, and on hover, add a subtle glow shadow.",
+    "borders": "Expose the skeleton via Grid Borders where applicable. No fully rounded pills except for small badges. Max border-radius for cards is 12px (rounded-xl).",
+    "hero_overlay": "In the Hero section, overlay the electric grid background image with bg-black/60 (dark mode) or bg-white/70 (light mode) so text remains AA accessible. NEVER use fully transparent backgrounds behind text."
+  },
+  "grids_and_layouts": {
+    "general": "Left-aligned, asymmetric layout. Avoid Bootstrap-style even columns everywhere.",
+    "sidebar": "Fixed left sidebar. 280px width on desktop.",
+    "main_content": "Left-aligned within the main container. Generous padding (p-6 to p-10).",
+    "kpi_grid": "Bento-style. grid-cols-1 md:grid-cols-4. One KPI spans 2 columns, the rest span 1.",
+    "resource_grid": "Dense Grid. grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4. gap-6. Stretch cards to full height (h-full)."
+  },
+  "components": {
+    "category_filters": "Pill-shaped tabs (rounded-full). Active state uses primary_accent background with white text. Inactive uses transparent background with subtle border.",
+    "resource_cards": "Use standard div wrappers, NOT generic shadcn Card, to allow custom hover glows. Structure: Category badge top right, lucide-react icon top left, Bold title, two-line truncated description, external link arrow button at bottom.",
+    "charts": "Recharts. Donut chart for category distribution. Bar chart for resource types. Ensure colors map to the brand accents (Blue, Red, Yellow).",
+    "quick_access": "Horizontal scrollable flex container or a specialized asymmetric top row. Add 'lucide-react' icons like Zap for styra, FileSpreadsheet for Salary."
+  },
+  "motion": {
+    "hover_states": "Cards lift (-translate-y-1), border color changes to primary_accent, and subtle colored drop-shadow appears.",
+    "page_load": "Framer motion staggered fade-in + slide-up for KPI cards and Resource cards (staggerChildren: 0.05).",
+    "buttons": "Active scale down (scale-95). Glow effect on hover for primary CTA."
+  },
+  "accessibility": {
+    "contrast": "Maintain WCAG AA minimum. Never put light gray text on white background.",
+    "focus": "focus-visible:ring-2 focus-visible:ring-primary_accent focus-visible:outline-none",
+    "testing": "Add data-testid to ALL interactive elements, category filters, resource cards, and search inputs."
+  },
+  "media_and_icons": {
+    "icons": "lucide-react. Use Zap for company logo/branding. FileText, Activity, Users, DollarSign, Database, Shield, Zap.",
+    "images": [
+      {
+        "url": "https://images.unsplash.com/photo-1517358133568-31ec5656304e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODh8MHwxfHNlYXJjaHwyfHxlbGVjdHJpYyUyMHBvd2VyJTIwZ3JpZCUyMGxpbmVzJTIwc3Vuc2V0fGVufDB8fHx8MTc4NTc2OTY3OXww&ixlib=rb-4.1.0&q=85",
+        "description": "Electric power grid silhouette at sunset",
+        "placement": "Hero header background with heavy blur and opacity (10-15%)"
+      }
+    ]
+  },
+  "dependencies": {
+    "install_commands": [
+      "yarn add lucide-react",
+      "yarn add framer-motion",
+      "yarn add recharts",
+      "yarn add @fontsource/outfit",
+      "yarn add @fontsource/manrope"
+    ]
+  },
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. Avoid this: make creative, distinctive frontends.",
+    "DO NOT use Inter or Roboto fonts. Use Outfit for headings and Manrope for body.",
+    "CREATE a toggle for Dark/Light mode, do not force only one.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur) for sticky navs and headers. Ensure NO fully transparent backgrounds on elements with content under them.",
+    "Every interaction needs micro-animations - hover states, transitions, staggered reveals via framer-motion.",
+    "Always use modern button styles (pill-shaped or sharp) with interaction animations.",
+    "Do NOT center align the app container. Left-align text for better reading flow.",
+    "Never use generic AI emojis. Use ONLY lucide-react icons.",
+    "Ensure all interactive elements have data-testid attributes for testing."
+  ],
+  "instructions_to_main_agent": "Use this JSON to construct a highly functional, visually energetic dashboard in JS (not TS). Implement the sidebar navigation, a top hero header (using the grid image with an overlay), KPI stat cards using framer-motion staggers, and a dense, asymmetric grid of 19 resource links categorized properly. Use Recharts for the BI charts. Ensure Shadcn components are adapted to fit the 'Performance Pro' aesthetic (sharp, tactile, non-bland). Follow the left-aligned layout convention and strictly apply the chosen typography and color archetypes."
+}
