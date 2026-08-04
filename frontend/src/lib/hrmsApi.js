@@ -45,6 +45,17 @@ export const hrmsApi = {
   paySummary: async (month) => (await http.get(`/hrms/payroll/summary/${month}`)).data,
   deleteMonthPayroll: async (month) => (await http.delete(`/hrms/payroll/${month}`)).data,
 
+  // Payroll import
+  payrollImportPreview: async (file, month) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("month", month);
+    return (await http.post("/hrms/payroll/import/preview", fd, {
+      headers: { "Content-Type": "multipart/form-data" },
+    })).data;
+  },
+  payrollImportCommit: async (payload) => (await http.post("/hrms/payroll/import/commit", payload)).data,
+
   // Report export URLs
   urlEmployees: () => `${http.defaults.baseURL}/hrms/reports/employees/export`,
   urlAttendance: (start, end) => {

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Play, Download, Printer, X } from "lucide-react";
+import { Play, Download, Printer, X, Upload } from "lucide-react";
 import HrmsLayout from "@/components/hrms/HrmsLayout";
+import PayrollImportDialog from "@/components/hrms/PayrollImportDialog";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { inr } from "@/lib/format";
 import { monthISO } from "@/lib/format";
@@ -14,6 +15,7 @@ export default function PayrollPage() {
   const [generating, setGenerating] = useState(false);
   const [selectedSlip, setSelectedSlip] = useState(null);
   const [settings, setSettings] = useState(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const load = async () => {
     const [p, s, e, cfg] = await Promise.all([
@@ -59,6 +61,10 @@ export default function PayrollPage() {
         <input data-testid="payroll-month" type="month" value={month} onChange={e => setMonth(e.target.value)}
           className="h-10 px-3 rounded-lg bg-background border border-border text-sm" />
         <div className="flex-1" />
+        <button data-testid="payroll-import" onClick={() => setImportOpen(true)}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[hsl(var(--primary))] text-white text-sm font-semibold hover:opacity-90 transition-opacity">
+          <Upload className="w-4 h-4" /> Import Old Sheet
+        </button>
         <button data-testid="payroll-generate" onClick={generate} disabled={generating}
           className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-foreground text-background text-sm font-semibold disabled:opacity-50">
           <Play className="w-4 h-4" /> {generating ? "Generating…" : "Generate Payroll"}
@@ -137,6 +143,7 @@ export default function PayrollPage() {
       {selectedSlip && (
         <PayslipDialog slip={selectedSlip} employee={empMap[selectedSlip.employee_id]} settings={settings} onClose={() => setSelectedSlip(null)} />
       )}
+      <PayrollImportDialog open={importOpen} month={month} onClose={() => setImportOpen(false)} onImported={load} />
     </HrmsLayout>
   );
 }

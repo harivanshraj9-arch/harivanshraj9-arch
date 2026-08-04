@@ -3,7 +3,7 @@ HRMS & Payroll module — Phase 1.
 Adds a full APIRouter that server.py can include without disturbing the
 existing dashboard / expenses code.
 """
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import List, Optional, Literal, Dict, Any
@@ -12,7 +12,7 @@ import uuid
 import io
 import re
 import calendar
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 hrms_router = APIRouter(prefix="/api/hrms", tags=["hrms"])
 
@@ -1105,6 +1105,307 @@ async def export_esic(month: str):
                      d["gross_earnings"], d["esic_employee"], d["esic_employer"],
                      d["esic_employee"] + d["esic_employer"]])
     return _xlsx(f"esic_{month}", headers, rows)
+
+
+
+# ============================================================
+# PAYROLL EXCEL IMPORT (historical months)
+# ============================================================
+PAY_HEADER_ALIASES = {
+    "name": ["name", "employee name", "employee", "staff", "staff name", "person", "emp name", "full name"],
+    "emp_code": ["emp code", "code", "employee id", "emp id", "staff id", "id", "emp no", "employee no", "empcode"],
+    "basic": ["basic", "basic pay", "basic salary", "basic wage"],
+    "hra": ["hra", "house rent", "house rent allowance"],
+    "da": ["da", "dearness", "dearness allowance"],
+    "conveyance": ["conveyance", "conv", "transport", "ta", "travel allowance"],
+    "special_allowance": ["special", "special allowance", "spl allowance", "spl", "other allowance"],
+    "bonus": ["bonus"],
+    "incentive": ["incentive", "perf", "performance", "performance incentive"],
+    "overtime": ["overtime", "ot", "ot pay"],
+    "arrears": ["arrears", "arrear"],
+    "reimbursements": ["reimburse", "reimbursement", "reimbursements", "reimb"],
+    "gross_earnings": ["gross", "gross earning", "gross earnings", "total earning", "total earnings", "gross salary", "total gross"],
+    "pf_employee": ["pf", "epf", "provident", "provident fund", "pf employee", "pf emp", "employee pf", "epf employee"],
+    "pf_employer": ["pf employer", "employer pf", "epf employer"],
+    "esic_employee": ["esic", "esi", "esic employee", "esi employee", "esi emp"],
+    "esic_employer": ["esic employer", "esi employer"],
+    "professional_tax": ["pt", "professional tax", "prof tax", "p tax", "ptax"],
+    "tds": ["tds", "tax deducted", "income tax", "it"],
+    "advance": ["advance", "adv", "salary advance"],
+    "loan_emi": ["loan", "loan emi", "emi"],
+    "other_deductions": ["other deduction", "other", "misc deduction", "misc"],
+    "total_deductions": ["total deduction", "total deductions", "deductions total", "total ded"],
+    "net_salary": ["net", "net pay", "take home", "net salary", "netpay", "net amount", "salary payable", "final salary", "payable"],
+    "days_present": ["present", "days present", "presence", "attendance days"],
+    "days_leave": ["leave", "on leave", "leave days"],
+    "days_absent": ["absent", "absent days"],
+    "working_days": ["working days", "total days", "month days", "days in month"],
+}
+
+
+def _norm(s):
+    return re.sub(r"[^a-z0-9]+", " ", str(s or "").strip().lower()).strip()
+
+
+def _map_pay_headers(header_row):
+    norm_hdrs = [_norm(h) for h in header_row]
+    mapping = {}
+    for field, aliases in PAY_HEADER_ALIASES.items():
+        alias_norms = [_norm(a) for a in aliases]
+        for idx, h in enumerate(norm_hdrs):
+            if h and h in alias_norms and field not in mapping:
+                mapping[field] = idx
+                break
+    return mapping
+
+
+def _num(v):
+    if v is None or v == "":
+        return 0.0
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).strip()
+    s = re.sub(r"[₹$€£,\s]", "", s)
+    if s in ("", "-", "—"): return 0.0
+    try:
+        return float(s)
+    except Exception:
+        return 0.0
+
+
+def _clean_str(v, max_len=120):
+    return str(v or "").strip()[:max_len]
+
+
+class PayrollImportCommit(BaseModel):
+    month: str
+    rows: List[Dict[str, Any]]
+    create_missing: bool = True
+    overwrite: bool = True
+
+
+@hrms_router.post("/payroll/import/preview")
+async def payroll_import_preview(file: UploadFile = File(...), month: str = Form(...)):
+    if not re.match(r"^\d{4}-\d{2}$", month or ""):
+        raise HTTPException(status_code=400, detail="month must be in YYYY-MM format")
+    fn = (file.filename or "").lower()
+    if not (fn.endswith(".xlsx") or fn.endswith(".xls") or fn.endswith(".xlsm")):
+        raise HTTPException(status_code=400, detail="Only .xlsx / .xls / .xlsm files supported")
+
+    try:
+        content = await file.read()
+        wb = load_workbook(filename=io.BytesIO(content), data_only=True, read_only=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read Excel file: {e}")
+
+    ws = wb.active
+
+    header_row = None
+    header_map = {}
+    rows_iter = ws.iter_rows(values_only=True)
+    for i, row in enumerate(rows_iter):
+        if i > 10: break
+        m = _map_pay_headers(list(row))
+        if len(m) >= 3:
+            header_row = row
+            header_map = m
+            break
+
+    if not header_row:
+        raise HTTPException(status_code=400, detail="Could not detect header row (need columns like Name / Emp Code / Basic / Net etc.)")
+    if "name" not in header_map and "emp_code" not in header_map:
+        raise HTTPException(status_code=400, detail="Sheet must contain either a Name or an Emp Code column")
+
+    emps = await _db().hrms_employees.find({}, {"_id": 0}).to_list(20000)
+    by_code = {(e.get("emp_code") or "").strip().lower(): e for e in emps}
+    by_name = {(e.get("name") or "").strip().lower(): e for e in emps}
+    existing_month = {p["employee_id"] for p in await _db().hrms_payroll.find({"month": month}, {"_id": 0, "employee_id": 1}).to_list(5000)}
+
+    preview = []
+    empty_skipped = 0
+    row_index = 1
+    for raw in rows_iter:
+        row_index += 1
+        if raw is None or all(c is None or str(c).strip() == "" for c in raw):
+            empty_skipped += 1
+            continue
+
+        def cell(field):
+            idx = header_map.get(field)
+            return raw[idx] if idx is not None and idx < len(raw) else None
+
+        code = _clean_str(cell("emp_code"), 40)
+        name = _clean_str(cell("name"), 120)
+        if not code and not name:
+            empty_skipped += 1
+            continue
+
+        emp = None
+        matched_by = "new"
+        if code and by_code.get(code.lower()):
+            emp = by_code[code.lower()]; matched_by = "code"
+        elif name and by_name.get(name.lower()):
+            emp = by_name[name.lower()]; matched_by = "name"
+
+        row_out = {
+            "row": row_index,
+            "emp_code": code or None,
+            "name": name or None,
+            "matched_emp_id": emp["id"] if emp else None,
+            "matched_by": matched_by,
+            "will_create_employee": emp is None,
+            "is_duplicate": emp is not None and emp["id"] in existing_month,
+            "basic": _num(cell("basic")),
+            "hra": _num(cell("hra")),
+            "da": _num(cell("da")),
+            "conveyance": _num(cell("conveyance")),
+            "special_allowance": _num(cell("special_allowance")),
+            "bonus": _num(cell("bonus")),
+            "incentive": _num(cell("incentive")),
+            "overtime": _num(cell("overtime")),
+            "arrears": _num(cell("arrears")),
+            "reimbursements": _num(cell("reimbursements")),
+            "gross_earnings": _num(cell("gross_earnings")),
+            "pf_employee": _num(cell("pf_employee")),
+            "pf_employer": _num(cell("pf_employer")),
+            "esic_employee": _num(cell("esic_employee")),
+            "esic_employer": _num(cell("esic_employer")),
+            "professional_tax": _num(cell("professional_tax")),
+            "tds": _num(cell("tds")),
+            "advance": _num(cell("advance")),
+            "loan_emi": _num(cell("loan_emi")),
+            "other_deductions": _num(cell("other_deductions")),
+            "total_deductions": _num(cell("total_deductions")),
+            "net_salary": _num(cell("net_salary")),
+            "days_present": _num(cell("days_present")),
+            "days_leave": _num(cell("days_leave")),
+            "days_absent": _num(cell("days_absent")),
+            "working_days": int(_num(cell("working_days")) or 26),
+            "errors": [],
+        }
+        # derive missing gross/net/total_ded
+        if row_out["gross_earnings"] == 0:
+            row_out["gross_earnings"] = round(
+                row_out["basic"] + row_out["hra"] + row_out["da"] + row_out["conveyance"]
+                + row_out["special_allowance"] + row_out["bonus"] + row_out["incentive"]
+                + row_out["overtime"] + row_out["arrears"] + row_out["reimbursements"], 2)
+        if row_out["total_deductions"] == 0:
+            row_out["total_deductions"] = round(
+                row_out["pf_employee"] + row_out["esic_employee"] + row_out["professional_tax"]
+                + row_out["tds"] + row_out["advance"] + row_out["loan_emi"] + row_out["other_deductions"], 2)
+        if row_out["net_salary"] == 0:
+            row_out["net_salary"] = round(row_out["gross_earnings"] - row_out["total_deductions"], 2)
+
+        if row_out["gross_earnings"] <= 0 and row_out["net_salary"] <= 0:
+            row_out["errors"].append("No salary numbers found")
+        row_out["valid"] = len(row_out["errors"]) == 0
+        preview.append(row_out)
+
+    counts = {
+        "total_rows": len(preview),
+        "valid": sum(1 for p in preview if p["valid"]),
+        "invalid": sum(1 for p in preview if not p["valid"]),
+        "duplicates": sum(1 for p in preview if p["valid"] and p["is_duplicate"]),
+        "new_employees": sum(1 for p in preview if p["valid"] and p["will_create_employee"]),
+        "matched": sum(1 for p in preview if p["valid"] and not p["will_create_employee"]),
+        "empty_skipped": empty_skipped,
+    }
+    return {
+        "filename": file.filename,
+        "month": month,
+        "headers": [str(h) if h is not None else "" for h in header_row],
+        "header_map": header_map,
+        "counts": counts,
+        "rows": preview,
+    }
+
+
+async def _create_minimal_employee_from_row(row):
+    code = row.get("emp_code") or await _next_emp_code()
+    emp = Employee(
+        emp_code=code,
+        name=row.get("name") or code,
+        basic=row.get("basic", 0) or 0,
+        hra=row.get("hra", 0) or 0,
+        da=row.get("da", 0) or 0,
+        conveyance=row.get("conveyance", 0) or 0,
+        special_allowance=row.get("special_allowance", 0) or 0,
+        employment_type="Full-Time",
+        status="Active",
+    ).model_dump()
+    await _db().hrms_employees.insert_one(emp)
+    emp.pop("_id", None)
+    return emp
+
+
+@hrms_router.post("/payroll/import/commit")
+async def payroll_import_commit(payload: PayrollImportCommit):
+    if not re.match(r"^\d{4}-\d{2}$", payload.month or ""):
+        raise HTTPException(status_code=400, detail="month must be in YYYY-MM format")
+    imported = 0; created_employees = 0; skipped_duplicate = 0; failed = 0
+    errors = []
+    for r in payload.rows:
+        try:
+            if not r.get("valid", True):
+                failed += 1
+                errors.append({"row": r.get("row"), "error": "; ".join(r.get("errors", []))})
+                continue
+            emp_id = r.get("matched_emp_id")
+            if not emp_id:
+                if not payload.create_missing:
+                    failed += 1
+                    errors.append({"row": r.get("row"), "error": f"Employee '{r.get('name') or r.get('emp_code')}' not found"})
+                    continue
+                emp = await _create_minimal_employee_from_row(r)
+                emp_id = emp["id"]
+                created_employees += 1
+            existing = await _db().hrms_payroll.find_one({"employee_id": emp_id, "month": payload.month}, {"_id": 0})
+            if existing and not payload.overwrite:
+                skipped_duplicate += 1
+                continue
+            slip = PayrollRun(
+                employee_id=emp_id, month=payload.month,
+                days_present=r.get("days_present", 0) or 0,
+                days_leave=r.get("days_leave", 0) or 0,
+                days_absent=r.get("days_absent", 0) or 0,
+                days_holiday=0,
+                working_days=int(r.get("working_days") or 26),
+                basic=r.get("basic", 0) or 0, hra=r.get("hra", 0) or 0,
+                da=r.get("da", 0) or 0, conveyance=r.get("conveyance", 0) or 0,
+                special_allowance=r.get("special_allowance", 0) or 0,
+                bonus=r.get("bonus", 0) or 0, incentive=r.get("incentive", 0) or 0,
+                overtime=r.get("overtime", 0) or 0, arrears=r.get("arrears", 0) or 0,
+                reimbursements=r.get("reimbursements", 0) or 0,
+                gross_earnings=r.get("gross_earnings", 0) or 0,
+                pf_employee=r.get("pf_employee", 0) or 0,
+                pf_employer=r.get("pf_employer", 0) or 0,
+                esic_employee=r.get("esic_employee", 0) or 0,
+                esic_employer=r.get("esic_employer", 0) or 0,
+                professional_tax=r.get("professional_tax", 0) or 0,
+                tds=r.get("tds", 0) or 0, advance=r.get("advance", 0) or 0,
+                loan_emi=r.get("loan_emi", 0) or 0,
+                other_deductions=r.get("other_deductions", 0) or 0,
+                total_deductions=r.get("total_deductions", 0) or 0,
+                net_salary=r.get("net_salary", 0) or 0,
+            ).model_dump()
+            await _db().hrms_payroll.update_one(
+                {"employee_id": emp_id, "month": payload.month},
+                {"$set": slip}, upsert=True,
+            )
+            imported += 1
+        except Exception as e:
+            failed += 1
+            errors.append({"row": r.get("row"), "error": str(e)[:200]})
+
+    return {
+        "month": payload.month,
+        "imported": imported,
+        "created_employees": created_employees,
+        "skipped_duplicate": skipped_duplicate,
+        "failed": failed,
+        "errors": errors[:200],
+    }
+
 
 
 # ============================================================

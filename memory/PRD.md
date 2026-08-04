@@ -114,3 +114,12 @@ Create a professional dashboard for the MVVNL/POLARIS electrical utility project
 ### Testing (iteration_4.json)
 - Backend: 29/29 pytest green (employee CRUD + filters + docs, attendance upsert + bulk + register, leave approve→attendance cascade, payroll math for PF/ESIC/PT/net, dashboard aggregates, 5 exports, regression on legacy endpoints).
 - Frontend: all pages render, KPIs populated from real seeded data, test-ids intact.
+
+## Update — 2026-02-04 · Payroll — Import Old Salary Sheets
+
+- New **Import Old Sheet** button on `/hrms/payroll` opens a 3-step wizard (pick month + file → preview & confirm → result).
+- Backend endpoints: `POST /api/hrms/payroll/import/preview` (multipart file + month) and `POST /api/hrms/payroll/import/commit` (JSON rows + `create_missing`/`overwrite` flags).
+- Header aliases mapped: Name/Employee/Staff · Emp Code/Code/ID · Basic/HRA/DA/Conveyance/Special · Bonus/Incentive/Overtime/Arrears/Reimbursements · Gross/Total Earnings · PF (employee/employer) · ESIC (employee/employer) · Prof Tax/TDS/Advance/Loan EMI/Other/Total Deductions · Net/Take Home · Present/Leave/Absent/Working Days.
+- Employee matching: Emp Code → Name (case-insensitive) → auto-create minimal employee (default option). Missing gross/net/total_deductions are auto-derived from the other numbers.
+- Duplicate detection: by `(employee_id, month)`; user can choose overwrite (default) or skip.
+- Verified end-to-end with a sample sheet: 4 rows, 3 matched (2 by code + 1 by name) + 1 new employee auto-created, correct gross/PF/ESIC/net inr amounts imported. UI dialog with color-coded rows (green=matched, yellow=new, blue=duplicate, red=invalid), summary chips, and result step. Reports and dashboard aggregates immediately reflect the imported months.
