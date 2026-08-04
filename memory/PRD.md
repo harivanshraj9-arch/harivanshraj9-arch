@@ -157,3 +157,34 @@ Create a professional dashboard for the MVVNL/POLARIS electrical utility project
 - Company saved (GSTIN, HDFC bank, account).
 - 3 uploaded WCC PDFs → 3 invoices auto-created in one shot (₹1,94,057 + ₹3,39,840 + ₹18,668 = ₹5,52,565).
 - Partial payment of ₹50,000 on one invoice → Collected ₹50,000 · Outstanding ₹5,02,565 · tiles update instantly.
+
+
+## Update — 2026-02-05 · Billing Phase 3 (Payment History + Customer Statement)
+
+### Payment History (per invoice)
+- New collection `billing_payments`. Every payment is logged as a separate entry with `date, amount, method (Bank/UPI/Cash/Cheque/Card/Other), reference/UTR, remarks`.
+- Endpoints: `POST /api/billing/invoices/{id}/payments`, `GET /api/billing/invoices/{id}/payments`, `DELETE /api/billing/payments/{pid}` — each add/delete automatically recomputes invoice `paid_amount` and `payment_status` (Unpaid / Partly Paid / Paid).
+- Frontend: PayDialog upgraded — status pill on invoice row opens dialog showing Invoice / Paid / Outstanding tiles, an Add Payment form (date, amount, method, reference, remarks, "Fill Outstanding" shortcut), and a live Transactions table with per-row delete.
+- Cheque method requires reference (validated client-side).
+
+### Customer Statement
+- New sidebar tab `Statement`. Endpoint `GET /api/billing/statement?customer&start&end` returns opening_balance, closing_balance, total_billed, total_paid, and full invoices + payments arrays in the period.
+- UI: pick customer from datalist of past customers, from/to dates, Generate → 4 KPI tiles + Invoices table + Payments table.
+- Print → dedicated popup with R K ENTERPRISES branded layout: logo, GSTIN, STATEMENT OF ACCOUNT header, period, customer, 4 KPI cards, invoices & payments tables, and a bold Closing Balance bar. Auto-triggers `window.print()`.
+
+### Testing (iteration_5.json)
+- Backend: 11/11 pytest green — POST/GET/DELETE payments, statement math (incl. opening balance carried from previous period), status transitions Unpaid → Partly → Paid → Unpaid.
+- Frontend: PayDialog and Statement flow verified end-to-end (₹3,000 + ₹1,000 partial payments, correct status pill, print popup opens).
+
+### Backlog surfaced by testing agent
+- Server-side validation of statement date format (return 400 on bad ISO).
+- Reject overpayment (amount > outstanding) in add_payment.
+- Extract `is_fully_paid` helper (50-paise fuzz) — currently duplicated in 3 places.
+- Split billing.py (867 lines) into `rates.py`, `invoices.py`, `payments.py`.
+
+## Pending / Next
+- P1: Vendor Billing RBAC (Admin edits Rate Master, Operator read-only).
+- P1: HRMS RBAC (Super Admin / HR / Manager / Accountant / Employee).
+- P2: HRMS Shift Management, Advance & Loan (EMI recovery), Document Letters, Google Sheets sync.
+- Tech-debt: refactor BillingPage.jsx (>1100 lines) into feature components; split billing.py + hrms.py.
+- Fix React `useEffect` dep warnings in HRMS pages.
