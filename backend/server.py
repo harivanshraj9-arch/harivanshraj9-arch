@@ -1004,6 +1004,11 @@ async def import_commit(payload: ImportCommitPayload):
 # ============================================================
 app.include_router(api_router)
 
+# HRMS module
+from hrms import hrms_router, init_hrms
+init_hrms(db)
+app.include_router(hrms_router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,

@@ -2,7 +2,7 @@ import { motion } from "framer-motion";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Zap, LayoutDashboard, Activity, Users, DollarSign,
-  Package, FileText, Scale, UserCheck, Sun, Moon, Wallet,
+  Package, FileText, Scale, UserCheck, Sun, Moon, Wallet, Briefcase,
 } from "lucide-react";
 import { CATEGORY_META } from "@/lib/categoryMeta";
 
@@ -25,6 +25,7 @@ export default function Sidebar({
   const navigate = useNavigate();
   const onDashboard = location.pathname === "/" || activeRoute === "dashboard";
   const onExpenses = location.pathname === "/expenses" || activeRoute === "expenses";
+  const onHrms = location.pathname.startsWith("/hrms") || activeRoute === "hrms";
 
   const handleCategoryClick = (key) => {
     if (onDashboard && onSelect) {
@@ -37,6 +38,11 @@ export default function Sidebar({
 
   const goExpenses = () => {
     navigate("/expenses");
+    onClose?.();
+  };
+
+  const goHrms = () => {
+    navigate("/hrms");
     onClose?.();
   };
 
@@ -82,6 +88,21 @@ export default function Sidebar({
           <Wallet className="w-4 h-4 shrink-0" />
           <span className="flex-1 text-left">Daily Expenses</span>
           {onExpenses && (
+            <motion.div layoutId="sidebar-active-dot" className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--energy))]" />
+          )}
+        </button>
+
+        <button
+          data-testid="nav-hrms"
+          onClick={goHrms}
+          className={`w-full group flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all
+            ${onHrms
+              ? "bg-foreground text-background"
+              : "text-foreground/70 hover:text-foreground hover:bg-muted"}`}
+        >
+          <Briefcase className="w-4 h-4 shrink-0" />
+          <span className="flex-1 text-left">HRMS &amp; Payroll</span>
+          {onHrms && (
             <motion.div layoutId="sidebar-active-dot" className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--energy))]" />
           )}
         </button>
