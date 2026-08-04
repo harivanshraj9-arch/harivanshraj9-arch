@@ -49,3 +49,29 @@ Create a professional dashboard for the MVVNL/POLARIS electrical utility project
 - P2: Custom resource creation UI (admin add/edit)
 - P2: Team activity dashboard with per-user attribution
 - P2: Rich analytics page (opens over time)
+
+## Update — 2026-02-04 · Daily Expenses Module + Rebrand
+
+### Rebrand
+- Company/domain name now shown as **Prathvi Power Solutions** in sidebar, hero badge, page title, footer.
+- Existing POLARIS/MVVNL data (19 resources) and design system unchanged.
+
+### Daily Expenses Module (`/expenses`)
+- Menu: new **Modules → Daily Expenses** entry in sidebar. Overview shows compact snapshot with "Open module" CTA.
+- **Data model**: Expense (id, date, category, amount, payment_mode, description, attachment, created_at, updated_at) + Budget (month, amount).
+- **APIs**: `/api/expenses` (list/create), `/api/expenses/item/{id}` (get/patch/delete), `/api/expenses/count`, `/api/expenses/categories`, `/api/expenses/summary/dashboard`, `/api/expenses/analytics/{monthly,category,weekly,payment}`, `/api/expenses/export/excel`, `/api/expenses/backup`, `/api/expenses/restore`, `/api/budget`.
+- **Form**: date (default today), category (preset + custom), amount, payment mode toggle (Cash/UPI/Bank/Card), description, attachment (≤2MB base64), Save/Update/Reset/Cancel, validation via pydantic + client.
+- **History**: responsive table + mobile cards, search, category/mode/date filters, sort date/amount, pagination (10/page), edit-inline, delete with confirmation modal.
+- **Analytics**: Recharts monthly bar, weekly line, category donut, top categories, budget-vs-actual bar.
+- **Budget**: monthly upsert; utilization bar; auto warning banner ≥80%; over-budget red state.
+- **Export**: Excel (openpyxl backend), Print/PDF via popup (browser print → save PDF), JSON backup download + merge restore.
+- **Security**: pydantic validation, sanitization (trim + length caps), amount coerced to positive float, indexed columns.
+
+### Testing (iteration_2.json)
+- Backend: 36/36 pytest green
+- Frontend: 100% of scoped flows
+
+### Backlog notes surfaced by testing agent
+- (Optional) Split server.py into routers by module
+- (Optional) Stricter validation on restore payloads
+- (Optional) Add authentication for write endpoints
