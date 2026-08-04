@@ -75,3 +75,19 @@ Create a professional dashboard for the MVVNL/POLARIS electrical utility project
 - (Optional) Split server.py into routers by module
 - (Optional) Stricter validation on restore payloads
 - (Optional) Add authentication for write endpoints
+
+## Update — 2026-02-04 · Excel Import feature
+
+- **Import Excel** button added to `/expenses` toolbar (next to Export/Backup/Restore); opens 3-step wizard.
+- Backend endpoints: `POST /api/expenses/import/preview` (multipart .xlsx/.xls/.xlsm, fuzzy header mapping, per-row validation, duplicate detection, empty-row skip, custom-category detection) and `POST /api/expenses/import/commit` (batched insert 1000/batch, skip_duplicates toggle).
+- Header aliases matched: Date/DATE/Dt/Expense Date · Category/Cat/Type/Head · Amount/Amt/Value/Total · PaymentMode/Payment Mode/Mode · Description/Remarks/Details/Notes · Attachment.
+- Payment mode normalized: UPI/GPay/PhonePe/Paytm→UPI, card/credit/debit→Card, bank/neft/imps/rtgs/transfer/cheque→Bank, else Cash.
+- Duplicate signature: `date|round(amount,2)|category.lower()|description.lower()`.
+- On successful commit, ExpensesPage calls `refreshAll` → summary cards, table, charts and budget update automatically.
+- Testing (iteration_3.json): 12/12 new backend tests + 36/36 regression pass; frontend flow 100%. Sample file imports 172/180 rows correctly with 8 amount-missing rows correctly flagged invalid.
+
+## Backlog notes surfaced by testing agent (all optional)
+- Split server.py into per-module routers
+- Use Mongo unique compound index for duplicates instead of loading all sigs
+- Reuse pydantic Expense model in import commit for defense-in-depth
+- For very large imports, use server-side upload token instead of round-tripping rows
