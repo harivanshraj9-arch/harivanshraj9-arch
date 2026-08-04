@@ -91,3 +91,26 @@ Create a professional dashboard for the MVVNL/POLARIS electrical utility project
 - Use Mongo unique compound index for duplicates instead of loading all sigs
 - Reuse pydantic Expense model in import commit for defense-in-depth
 - For very large imports, use server-side upload token instead of round-tripping rows
+
+## Update — 2026-02-04 · HRMS & Payroll Module (Phase 1)
+
+### Scope delivered (Phase 1)
+- **Employee Master**: auto emp_code (EMP-XXXX), 25 fields (personal, job, statutory, salary, bank), photo + multi-document upload (Aadhaar/PAN/Resume/Appointment/ID Card/Increment/Experience/Warning/Relieving/Other), tabbed dialog, search + department/designation/status/joining/salary filters.
+- **Attendance**: daily marking with per-row status/check-in/check-out/remarks, bulk-mark buttons, computed working_hours/overtime/late_minutes; monthly register with per-day color-coded cells and P/A/L totals; upsert-on-key `(employee_id, date)`.
+- **Leaves**: apply / approve / reject; approval auto-writes 'Leave' attendance rows for the date range; annual balance by type (Casual/Sick/Paid/Earned/Maternity/LWP with default quotas).
+- **Payroll**: one-click `POST /payroll/generate` for a month — prorates fixed structure by attendance ratio, computes PF (12%/12% capped at ₹15,000), ESIC (0.75%/3.25% only when gross ≤ ₹21,000), PT (₹200 default), overtime at 1.5× per-hour basic+DA; per-employee payslip modal with Print/PDF (client-side window.print).
+- **Reports**: Excel exports for Employees, Attendance, Payroll, PF register, ESIC register (all via openpyxl).
+- **HRMS Dashboard**: KPI cards (Total/Present/Absent/On-Leave/Late/Pending-Leaves/Today Cost/Monthly Payroll/PF/ESIC), attendance trend (14 days), department pie, payroll bar (6 months), YTD leave stats, upcoming birthdays & work anniversaries.
+- **Settings**: company details, working days, office timings, late threshold, PF/ESIC percentages, PT — all persisted and used by payroll.
+
+### Architecture
+- Backend: new `/app/backend/hrms.py` (`hrms_router`, `init_hrms(db)`), included by `server.py`. Parameterized routes use segments like `/employees/{id}`, `/leaves/{id}` — no shadowing.
+- Frontend: new pages under `/app/frontend/src/pages/hrms/`, shared `HrmsLayout` + `hrmsApi.js`, routes `/hrms`, `/hrms/{employees,attendance,leaves,payroll,reports,settings}`.
+- Sidebar gained a single "HRMS & Payroll" entry keeping the existing look intact.
+
+### Deferred to Phase 2 (per user)
+- Shift Management module, Loans & Advances tracking, standalone Documents module page, Notifications (birthdays/reminders/holidays), User Roles + login, Google Sheets 2-way sync, Audit Logs, backup/restore for HRMS collections, holiday calendar UI.
+
+### Testing (iteration_4.json)
+- Backend: 29/29 pytest green (employee CRUD + filters + docs, attendance upsert + bulk + register, leave approve→attendance cascade, payroll math for PF/ESIC/PT/net, dashboard aggregates, 5 exports, regression on legacy endpoints).
+- Frontend: all pages render, KPIs populated from real seeded data, test-ids intact.
