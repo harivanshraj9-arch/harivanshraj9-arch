@@ -136,3 +136,24 @@ Create a professional dashboard for the MVVNL/POLARIS electrical utility project
 - **New product prompt**: if AI finds an unknown product, a popup lets you set the rate; it's saved to Rate Master and reused forever.
 - **Exports**: Rate Master (Excel), each invoice (Excel), printable PDF (browser print).
 - Sidebar entry "Vendor Billing" added under Modules; existing HRMS, Daily Expenses and Overview untouched.
+
+## Update — 2026-02-04 · Billing Phase 2 (Bulk WCC + Branded PDF + Payment Tracker)
+
+### Bulk WCC Import
+- New "Bulk WCC" tab lets user drop multiple PDFs, sets one customer, hits "AI Extract All" (loops each file through `/wcc/parse`), reviews per-file matched line items and unknowns, then one click "Create N Invoices" fires one invoice per PDF.
+
+### Branded Invoice PDF
+- New `/api/billing/company` endpoint stores company name, GSTIN, PAN, address, phone, email, logo (base64, ≤500KB), bank name/account/IFSC/branch, invoice_prefix and footer.
+- Print PDF now shows: logo + company header, GSTIN/PAN, Bill To + Place of Supply boxes, line items, totals block, **Amount in Words** (Indian Lakh/Crore format via `amountToWords()`), bank details box, PAID stamp when applicable, dual signature line, footer text.
+
+### Payment Tracker
+- Invoice schema gained `payment_status` (Unpaid / Partly Paid / Paid / Overdue), `paid_amount`, `due_date`.
+- `PATCH /api/billing/invoices/{id}/payment` — updates payment and auto-derives status from `paid_amount` when only paid amount is sent.
+- Invoice list shows Paid column + Due amount + clickable status pill → payment dialog with paid amount & due date.
+- New `/api/billing/dashboard/summary` returns Total Invoices / Billed / Collected / Outstanding / Overdue amount and by-status counts.
+- Invoice list top now shows 5 dashboard tiles with live outstanding + overdue amounts.
+
+### Verified E2E
+- Company saved (GSTIN, HDFC bank, account).
+- 3 uploaded WCC PDFs → 3 invoices auto-created in one shot (₹1,94,057 + ₹3,39,840 + ₹18,668 = ₹5,52,565).
+- Partial payment of ₹50,000 on one invoice → Collected ₹50,000 · Outstanding ₹5,02,565 · tiles update instantly.

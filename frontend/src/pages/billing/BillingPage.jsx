@@ -7,11 +7,14 @@ import Sidebar from "@/components/Sidebar";
 import { useTheme } from "@/lib/theme";
 import { billingApi } from "@/lib/billingApi";
 import { inr } from "@/lib/format";
+import { amountToWords } from "@/lib/amountInWords";
 
 const TABS = [
   { key: "rates", label: "Rate Master", icon: ClipboardList },
   { key: "new", label: "New Invoice (WCC)", icon: Sparkles },
+  { key: "bulk", label: "Bulk WCC", icon: Upload },
   { key: "invoices", label: "Invoices", icon: FileText },
+  { key: "company", label: "Company", icon: History },
   { key: "audit", label: "Audit Log", icon: ScrollText },
 ];
 
@@ -62,7 +65,9 @@ export default function BillingPage() {
         <div className="px-4 sm:px-8 py-6 space-y-6 max-w-[1600px]">
           {tab === "rates" && <RateMaster />}
           {tab === "new" && <NewInvoice />}
+          {tab === "bulk" && <BulkWCC />}
           {tab === "invoices" && <InvoiceList />}
+          {tab === "company" && <CompanyForm />}
           {tab === "audit" && <AuditLog />}
           <footer className="pt-6 pb-10 border-t border-border text-xs text-muted-foreground">© 2026 Prathvi Power Solutions · Vendor Billing</footer>
         </div>
@@ -283,8 +288,9 @@ function NewInvoice() {
       // Reset
       setFile(null); setPreview(null); setLines([]);
       setCustomer({ customer: "", customer_gstin: "", customer_address: "", place_of_supply: "", is_igst: false, notes: "" });
-      // Show print
-      printInvoice(inv);
+      // Show print with company header
+      const co = await billingApi.getCompany();
+      printInvoice(inv, co);
     } catch (err) { toast.error("Save failed"); }
     finally { setSaving(false); }
   };
@@ -417,12 +423,30 @@ function NewInvoice() {
 }
 
 /* ============= INVOICE LIST ============= */
+const PAYMENT_STYLES = {
+  Paid: "bg-emerald-500/10 text-emerald-500",
+  "Partly Paid": "bg-[hsl(var(--energy))]/15 text-[hsl(var(--energy))]",
+  Unpaid: "bg-muted text-muted-foreground",
+  Overdue: "bg-[hsl(var(--destructive))]/10 text-[hsl(var(--destructive))]",
+};
+
 function InvoiceList() {
   const [rows, setRows] = useState([]);
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState(null);
-  const load = async () => setRows((await billingApi.listInvoices({ q })).items);
+  const [summary, setSummary] = useState(null);
+  const [company, setCompany] = useState(null);
+  const [payDialog, setPayDialog] = useState(null);
+  const load = async () => {
+    const [inv, s, c] = await Promise.all([
+      billingApi.listInvoices({ q }),
+      billingApi.summary(),
+      billingApi.getCompany(),
+    ]);
+    setRows(inv.items); setSummary(s); setCompany(c);
+  };
   useEffect(() => { load(); }, [q]); // eslint-disable-line
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -432,43 +456,290 @@ function InvoiceList() {
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search invoice, customer…" className="w-full h-10 pl-9 pr-3 rounded-lg bg-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))]" />
         </div>
       </div>
+
+      {summary && (
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <SumTile testid="tile-invoices" label="Invoices" value={summary.total_invoices} />
+          <SumTile testid="tile-billed" label="Total Billed" value={inr(summary.total_billed)} />
+          <SumTile testid="tile-paid" label="Collected" value={inr(summary.total_paid)} tint="text-emerald-500" />
+          <SumTile testid="tile-outstanding" label="Outstanding" value={inr(summary.outstanding)} tint="text-[hsl(var(--energy))]" />
+          <SumTile testid="tile-overdue" label="Overdue" value={inr(summary.overdue_amount)} tint="text-[hsl(var(--destructive))]" />
+        </div>
+      )}
+
       <div className="rounded-2xl border border-border bg-card overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-muted/50 border-b border-border"><tr><Th>Invoice</Th><Th>Date</Th><Th>Customer</Th><Th className="text-right">Subtotal</Th><Th className="text-right">Tax</Th><Th className="text-right">Grand Total</Th><Th></Th></tr></thead>
+          <thead className="bg-muted/50 border-b border-border"><tr><Th>Invoice</Th><Th>Date</Th><Th>Customer</Th><Th className="text-right">Grand Total</Th><Th className="text-right">Paid</Th><Th>Status</Th><Th></Th></tr></thead>
           <tbody>
             {rows.length === 0 && <tr><td colSpan={7} className="py-10 text-center text-muted-foreground">No invoices yet</td></tr>}
-            {rows.map(r => (
-              <tr key={r.id} className="border-b border-border last:border-0 hover:bg-muted/40">
-                <td className="px-3 py-2 font-mono text-xs">{r.invoice_no}</td>
-                <td className="px-3 py-2 text-xs">{r.date}</td>
-                <td className="px-3 py-2">{r.customer || "—"}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{inr(r.subtotal)}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{inr(r.cgst + r.sgst + r.igst)}</td>
-                <td className="px-3 py-2 text-right tabular-nums font-bold text-emerald-500">{inr(r.grand_total)}</td>
-                <td className="px-3 py-2 text-right">
-                  <button onClick={() => setSelected(r)} className="text-xs px-3 py-1 rounded-full border border-border hover:bg-muted">View</button>
-                  <a href={billingApi.invoiceExcelUrl(r.id)} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1 rounded-full border border-border hover:bg-muted ml-1">Excel</a>
-                  <button onClick={() => printInvoice(r)} className="text-xs px-3 py-1 rounded-full border border-border hover:bg-muted ml-1">Print</button>
-                  <button onClick={async () => { if (window.confirm(`Delete ${r.invoice_no}?`)) { await billingApi.deleteInvoice(r.id); toast.success("Deleted"); load(); } }} className="w-8 h-8 rounded-md hover:bg-[hsl(var(--destructive))]/10 hover:text-[hsl(var(--destructive))] inline-flex items-center justify-center ml-1"><Trash2 className="w-3.5 h-3.5" /></button>
-                </td>
-              </tr>
-            ))}
+            {rows.map(r => {
+              const outstanding = r.grand_total - (r.paid_amount || 0);
+              return (
+                <tr key={r.id} className="border-b border-border last:border-0 hover:bg-muted/40">
+                  <td className="px-3 py-2 font-mono text-xs">{r.invoice_no}</td>
+                  <td className="px-3 py-2 text-xs">{r.date}</td>
+                  <td className="px-3 py-2">{r.customer || "—"}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-bold">{inr(r.grand_total)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    <div>{inr(r.paid_amount || 0)}</div>
+                    {outstanding > 0.5 && <div className="text-[10px] text-[hsl(var(--energy))]">Due {inr(outstanding)}</div>}
+                  </td>
+                  <td className="px-3 py-2">
+                    <button data-testid={`pay-status-${r.id}`} onClick={() => setPayDialog(r)}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold ${PAYMENT_STYLES[r.payment_status] || "bg-muted"}`}>
+                      {r.payment_status || "Unpaid"}
+                    </button>
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <button onClick={() => setSelected(r)} className="text-xs px-3 py-1 rounded-full border border-border hover:bg-muted">View</button>
+                    <a href={billingApi.invoiceExcelUrl(r.id)} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1 rounded-full border border-border hover:bg-muted ml-1">Excel</a>
+                    <button onClick={() => printInvoice(r, company)} className="text-xs px-3 py-1 rounded-full border border-border hover:bg-muted ml-1">Print</button>
+                    <button onClick={async () => { if (window.confirm(`Delete ${r.invoice_no}?`)) { await billingApi.deleteInvoice(r.id); toast.success("Deleted"); load(); } }} className="w-8 h-8 rounded-md hover:bg-[hsl(var(--destructive))]/10 hover:text-[hsl(var(--destructive))] inline-flex items-center justify-center ml-1"><Trash2 className="w-3.5 h-3.5" /></button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
-      {selected && <InvoiceView inv={selected} onClose={() => setSelected(null)} />}
+      {selected && <InvoiceView inv={selected} company={company} onClose={() => setSelected(null)} />}
+      {payDialog && <PayDialog invoice={payDialog} onClose={() => setPayDialog(null)} onSaved={() => { setPayDialog(null); load(); }} />}
     </div>
   );
 }
 
-function InvoiceView({ inv, onClose }) {
+function PayDialog({ invoice, onClose, onSaved }) {
+  const [status, setStatus] = useState(invoice.payment_status || "Unpaid");
+  const [paid, setPaid] = useState(invoice.paid_amount || 0);
+  const [due, setDue] = useState(invoice.due_date || "");
+  const save = async () => {
+    try {
+      await billingApi.updatePayment(invoice.id, { payment_status: status, paid_amount: parseFloat(paid) || 0, due_date: due || null });
+      toast.success("Payment updated"); onSaved();
+    } catch { toast.error("Failed"); }
+  };
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-card border border-border rounded-2xl p-5">
+        <h3 className="font-heading text-lg font-bold mb-4">Payment · {invoice.invoice_no}</h3>
+        <div className="grid grid-cols-1 gap-3">
+          <F label="Status">
+            <Sel value={status} onChange={setStatus} options={["Unpaid", "Partly Paid", "Paid", "Overdue"]} />
+          </F>
+          <F label={`Paid Amount (of ${inr(invoice.grand_total)})`}>
+            <Num data-testid="pay-amount" value={paid} onChange={setPaid} />
+          </F>
+          <F label="Due Date"><I type="date" value={due} onChange={setDue} /></F>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 rounded-full border border-border text-sm font-semibold hover:bg-muted">Cancel</button>
+          <button data-testid="pay-save" onClick={save} className="inline-flex items-center gap-1.5 px-5 py-2 rounded-full bg-foreground text-background text-sm font-semibold"><Save className="w-4 h-4" /> Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const SumTile = ({ testid, label, value, tint = "" }) => (
+  <div data-testid={testid} className="rounded-2xl border border-border bg-card p-4">
+    <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{label}</div>
+    <div className={`font-heading text-xl font-bold tabular-nums mt-1 ${tint}`}>{value}</div>
+  </div>
+);
+
+/* ============= BULK WCC ============= */
+function BulkWCC() {
+  const [files, setFiles] = useState([]);
+  const [results, setResults] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [company, setCompany] = useState(null);
+  const [customer, setCustomer] = useState({ customer: "", customer_gstin: "", customer_address: "", place_of_supply: "", is_igst: false });
+  const fileRef = useRef();
+
+  useEffect(() => { billingApi.getCompany().then(setCompany); }, []);
+
+  const parseAll = async () => {
+    if (files.length === 0) return;
+    setBusy(true); setResults([]);
+    const out = [];
+    for (const f of files) {
+      try {
+        const d = await billingApi.parseWCC(f);
+        out.push({ filename: f.name, ...d, selected: true });
+      } catch (e) {
+        out.push({ filename: f.name, error: e?.response?.data?.detail || "Parse failed", matched: [], unknown: [] });
+      }
+      setResults([...out]);
+    }
+    setBusy(false);
+    toast.success(`Parsed ${out.length} PDF${out.length > 1 ? "s" : ""}`);
+  };
+
+  const createAll = async () => {
+    setBusy(true);
+    let created = 0;
+    for (const r of results.filter(x => x.selected && x.matched?.length > 0)) {
+      try {
+        await billingApi.createInvoice({
+          ...customer, wcc_filename: r.filename,
+          lines: r.matched.map(m => ({
+            rate_id: m.rate_id, name: m.name, hsn: m.hsn, unit: m.unit,
+            quantity: Number(m.quantity), rate: Number(m.rate), gst_pct: Number(m.gst_pct),
+          })),
+        });
+        created++;
+      } catch (e) { /* skip */ }
+    }
+    setBusy(false);
+    toast.success(`Generated ${created} invoices`);
+    setFiles([]); setResults([]);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="font-heading text-3xl font-black tracking-tight">Bulk WCC Import</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Drop multiple WCC PDFs. AI parses each, then one click generates all invoices.</p>
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card p-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+          <F label="Customer / Buyer"><I data-testid="bulk-customer" value={customer.customer} onChange={v => setCustomer(c => ({ ...c, customer: v }))} /></F>
+          <F label="GSTIN"><I value={customer.customer_gstin} onChange={v => setCustomer(c => ({ ...c, customer_gstin: v }))} /></F>
+          <F label="Address" full><textarea rows={2} value={customer.customer_address} onChange={e => setCustomer(c => ({ ...c, customer_address: e.target.value }))} className="w-full px-3 py-2 rounded-lg bg-background border border-border text-sm" /></F>
+          <F label="Place of Supply"><I value={customer.place_of_supply} onChange={v => setCustomer(c => ({ ...c, place_of_supply: v }))} /></F>
+          <F label="Tax Type">
+            <div className="flex gap-1 h-10 p-1 rounded-lg bg-muted">
+              <button type="button" onClick={() => setCustomer(c => ({ ...c, is_igst: false }))} className={`flex-1 rounded-md text-xs font-semibold ${!customer.is_igst ? "bg-background shadow" : "text-muted-foreground"}`}>CGST + SGST</button>
+              <button type="button" onClick={() => setCustomer(c => ({ ...c, is_igst: true }))} className={`flex-1 rounded-md text-xs font-semibold ${customer.is_igst ? "bg-background shadow" : "text-muted-foreground"}`}>IGST</button>
+            </div>
+          </F>
+        </div>
+
+        <div className="flex items-center gap-3 pt-3 border-t border-border">
+          <button data-testid="bulk-pick" onClick={() => fileRef.current?.click()} className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-border text-sm font-semibold hover:bg-muted">
+            <Upload className="w-4 h-4" /> {files.length ? `${files.length} PDF${files.length > 1 ? "s" : ""} selected` : "Choose WCC PDFs"}
+          </button>
+          <input ref={fileRef} data-testid="bulk-files" type="file" accept=".pdf" multiple onChange={e => setFiles(Array.from(e.target.files || []))} className="hidden" />
+          <button data-testid="bulk-parse" onClick={parseAll} disabled={busy || files.length === 0}
+            className="inline-flex items-center gap-2 px-5 py-2 rounded-full bg-foreground text-background text-sm font-semibold disabled:opacity-50">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+            AI Extract All
+          </button>
+          {results.length > 0 && (
+            <button data-testid="bulk-create" onClick={createAll} disabled={busy}
+              className="inline-flex items-center gap-2 px-5 py-2 rounded-full bg-emerald-500 text-white text-sm font-semibold disabled:opacity-50 ml-auto">
+              <Save className="w-4 h-4" /> Create {results.filter(r => r.selected && r.matched?.length > 0).length} Invoice(s)
+            </button>
+          )}
+        </div>
+      </div>
+
+      {results.map((r, i) => {
+        const totalGross = (r.matched || []).reduce((s, m) => s + m.quantity * m.rate, 0);
+        return (
+          <div key={i} data-testid={`bulk-result-${i}`} className="rounded-2xl border border-border bg-card p-4">
+            <div className="flex items-center justify-between mb-2 gap-2">
+              <label className="flex items-center gap-2 font-heading font-bold flex-1 min-w-0 truncate">
+                <input type="checkbox" checked={r.selected !== false} onChange={e => setResults(prev => prev.map((x, ix) => ix === i ? { ...x, selected: e.target.checked } : x))} />
+                <FileText className="w-4 h-4 shrink-0" />
+                {r.filename}
+              </label>
+              {r.matched && r.matched.length > 0 && (
+                <span className="text-xs font-bold tabular-nums">{r.matched.length} items · Subtotal {inr(totalGross)}</span>
+              )}
+            </div>
+            {r.error && <div className="text-sm text-[hsl(var(--destructive))]">{r.error}</div>}
+            {(r.matched || []).length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/50"><tr><Th>Item</Th><Th className="text-right">Qty</Th><Th className="text-right">Rate</Th><Th className="text-right">Amount</Th></tr></thead>
+                  <tbody>
+                    {r.matched.map((m, j) => (
+                      <tr key={j} className="border-t border-border"><td className="px-3 py-1">{m.name}</td><td className="px-3 py-1 text-right tabular-nums">{m.quantity}</td><td className="px-3 py-1 text-right tabular-nums">{inr(m.rate)}</td><td className="px-3 py-1 text-right tabular-nums font-semibold">{inr(m.quantity * m.rate)}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {(r.unknown || []).length > 0 && (
+              <div className="mt-2 text-xs text-[hsl(var(--energy))]">
+                {r.unknown.length} unknown item(s) — please add these in Rate Master first: {r.unknown.map(u => u.name).join(", ")}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ============= COMPANY SETTINGS ============= */
+function CompanyForm() {
+  const [c, setC] = useState(null);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { billingApi.getCompany().then(setC); }, []);
+  const set = (k, v) => setC(prev => ({ ...prev, [k]: v }));
+  const uploadLogo = (e) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    if (f.size > 500 * 1024) { toast.error("Logo max 500KB"); return; }
+    const r = new FileReader(); r.onload = () => set("logo", r.result); r.readAsDataURL(f);
+  };
+  const save = async (e) => {
+    e.preventDefault(); setSaving(true);
+    try { await billingApi.saveCompany(c); toast.success("Saved"); }
+    catch { toast.error("Save failed"); }
+    finally { setSaving(false); }
+  };
+  if (!c) return <div className="text-sm text-muted-foreground">Loading…</div>;
+  return (
+    <form onSubmit={save} className="space-y-4">
+      <h1 className="font-heading text-3xl font-black tracking-tight">Company Details</h1>
+      <p className="text-sm text-muted-foreground">These appear on every invoice PDF you print.</p>
+      <div className="rounded-2xl border border-border bg-card p-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <F label="Company Name"><I data-testid="co-name" value={c.name} onChange={v => set("name", v)} /></F>
+        <F label="GSTIN"><I data-testid="co-gstin" value={c.gstin} onChange={v => set("gstin", v)} /></F>
+        <F label="PAN"><I value={c.pan} onChange={v => set("pan", v)} /></F>
+        <F label="Phone"><I value={c.phone} onChange={v => set("phone", v)} /></F>
+        <F label="Email"><I type="email" value={c.email} onChange={v => set("email", v)} /></F>
+        <F label="Invoice Prefix"><I value={c.invoice_prefix} onChange={v => set("invoice_prefix", v)} /></F>
+        <F label="Address" full><textarea rows={2} value={c.address} onChange={e => set("address", e.target.value)} className="w-full px-3 py-2 rounded-lg bg-background border border-border text-sm" /></F>
+        <F label="Logo (max 500KB)" full>
+          <div className="flex items-center gap-3">
+            {c.logo && <img src={c.logo} alt="logo" className="h-12 w-12 rounded-lg object-contain bg-muted p-1" />}
+            <label className="cursor-pointer inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-border hover:bg-muted text-sm">
+              <Upload className="w-4 h-4" /> {c.logo ? "Change logo" : "Upload logo"}
+              <input type="file" accept="image/*" onChange={uploadLogo} className="hidden" />
+            </label>
+            {c.logo && <button type="button" onClick={() => set("logo", null)} className="text-xs px-3 py-1 rounded-full border border-border hover:bg-muted">Remove</button>}
+          </div>
+        </F>
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card p-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="sm:col-span-2 text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">Bank Details</div>
+        <F label="Bank Name"><I data-testid="co-bank" value={c.bank_name} onChange={v => set("bank_name", v)} /></F>
+        <F label="Account Number"><I data-testid="co-account" value={c.account_number} onChange={v => set("account_number", v)} /></F>
+        <F label="IFSC"><I value={c.ifsc} onChange={v => set("ifsc", v)} /></F>
+        <F label="Branch"><I value={c.branch} onChange={v => set("branch", v)} /></F>
+        <F label="Invoice Footer" full><textarea rows={2} value={c.invoice_footer} onChange={e => set("invoice_footer", e.target.value)} className="w-full px-3 py-2 rounded-lg bg-background border border-border text-sm" /></F>
+      </div>
+
+      <div className="flex justify-end">
+        <button data-testid="co-save" type="submit" disabled={saving} className="inline-flex items-center gap-1.5 px-5 py-2 rounded-full bg-foreground text-background text-sm font-semibold disabled:opacity-50"><Save className="w-4 h-4" /> Save Company</button>
+      </div>
+    </form>
+  );
+}
+
+function InvoiceView({ inv, company, onClose }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm p-4 flex items-start justify-center overflow-y-auto">
       <div className="w-full max-w-3xl bg-card border border-border rounded-2xl overflow-hidden my-6">
         <div className="flex items-center justify-between p-4 border-b border-border">
           <div><div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">Invoice</div><h3 className="font-heading text-lg font-bold">{inv.invoice_no}</h3></div>
           <div className="flex gap-2">
-            <button onClick={() => printInvoice(inv)} className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-foreground text-background text-xs font-semibold"><Printer className="w-3.5 h-3.5" /> Print</button>
+            <button onClick={() => printInvoice(inv, company)} className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-foreground text-background text-xs font-semibold"><Printer className="w-3.5 h-3.5" /> Print</button>
             <button onClick={onClose} className="w-9 h-9 rounded-md hover:bg-muted flex items-center justify-center"><X className="w-4 h-4" /></button>
           </div>
         </div>
@@ -479,7 +750,10 @@ function InvoiceView({ inv, onClose }) {
             <tbody>{inv.lines.map((l, i) => (<tr key={i} className="border-t border-border"><td className="p-2">{l.name}</td><td className="p-2 font-mono">{l.hsn}</td><td className="p-2 text-right">{l.quantity}</td><td className="p-2 text-right">{inr(l.rate)}</td><td className="p-2 text-right">{l.gst_pct}%</td><td className="p-2 text-right tabular-nums font-semibold">{inr(l.amount)}</td></tr>))}</tbody>
           </table>
           <div className="grid grid-cols-2 text-sm">
-            <div />
+            <div className="text-xs italic text-muted-foreground">
+              <div className="font-bold text-foreground not-italic mb-1">Amount in words:</div>
+              {amountToWords(inv.grand_total)}
+            </div>
             <div className="space-y-1">
               <Row k="Subtotal" v={inv.subtotal} />
               {!inv.is_igst && <><Row k="CGST" v={inv.cgst} /><Row k="SGST" v={inv.sgst} /></>}
@@ -495,30 +769,77 @@ function InvoiceView({ inv, onClose }) {
 }
 const Row = ({ k, v }) => <div className="flex justify-between border-b border-border py-0.5"><span className="text-muted-foreground">{k}</span><span className="tabular-nums font-semibold">{inr(v)}</span></div>;
 
-function printInvoice(inv) {
+function printInvoice(inv, company) {
   const w = window.open("", "_blank", "width=900,height=1000");
   if (!w) { toast.error("Enable popups"); return; }
+  const co = company || {};
+  const words = amountToWords(inv.grand_total);
   const lines = inv.lines.map((l, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(l.name)}</td><td>${l.hsn || ""}</td><td>${l.unit}</td><td class="num">${l.quantity}</td><td class="num">₹${l.rate.toFixed(2)}</td><td class="num">${l.gst_pct}%</td><td class="num">₹${l.amount.toFixed(2)}</td></tr>`).join("");
   w.document.write(`<!DOCTYPE html><html><head><title>${inv.invoice_no}</title><style>
-    body{font-family:system-ui,sans-serif;padding:28px;color:#111}
-    h1{margin:0}.head{display:flex;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:10px;margin-bottom:14px}
+    body{font-family:system-ui,sans-serif;padding:24px;color:#111;font-size:12px}
+    h1{margin:0;font-size:22px}
+    .head{display:flex;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:12px;margin-bottom:14px;align-items:flex-start;gap:12px}
+    .logo{max-height:60px;max-width:80px;object-fit:contain}
+    .muted{color:#666;font-size:11px}
+    .box{border:1px solid #ccc;padding:10px;border-radius:4px}
     table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}
     th,td{border:1px solid #ccc;padding:5px 7px;text-align:left}th{background:#f4f4f5}
-    .num{text-align:right}.tot{margin-top:16px;width:280px;margin-left:auto}
-    .grand{margin-top:6px;padding:8px;background:#f4f4f5;text-align:right;font-weight:700;font-size:16px}
-    .muted{color:#666;font-size:11px}
+    .num{text-align:right}
+    .bottom{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;margin-top:14px}
+    .totals{border:1px solid #ccc;padding:10px;border-radius:4px}
+    .totals table{margin:0}
+    .totals td{border:0;padding:3px 0}
+    .grand{margin-top:8px;padding:8px 10px;background:#111;color:#fff;text-align:right;font-weight:700;font-size:15px;border-radius:4px}
+    .words{padding:8px 10px;background:#f4f4f5;font-style:italic;margin-top:6px;border-radius:4px}
+    .bank{font-size:11px}
+    .bank b{display:inline-block;min-width:80px}
+    .foot{margin-top:18px;padding-top:10px;border-top:1px dashed #ccc;font-size:10px;color:#666;text-align:center}
+    .sig{margin-top:40px;display:flex;justify-content:space-between;font-size:11px}
   </style></head><body>
-  <div class="head"><div><h1>R K ENTERPRISES</h1><div class="muted">Tax Invoice</div></div><div style="text-align:right;font-size:12px"><b>${inv.invoice_no}</b><br/>Date: ${inv.date}</div></div>
-  <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:8px">
-    <div><b>Bill To</b><br/>${escapeHtml(inv.customer || "-")}<br/>${escapeHtml(inv.customer_address || "")}<br/>GSTIN: ${escapeHtml(inv.customer_gstin || "-")}</div>
-    <div><b>Place of Supply</b><br/>${escapeHtml(inv.place_of_supply || "-")}<br/>${inv.is_igst ? "IGST (Inter-state)" : "CGST + SGST"}</div>
+  <div class="head">
+    <div style="display:flex;gap:12px;align-items:flex-start;flex:1">
+      ${co.logo ? `<img src="${co.logo}" class="logo" />` : ""}
+      <div>
+        <h1>${escapeHtml(co.name || "R K ENTERPRISES")}</h1>
+        <div class="muted">${escapeHtml(co.address || "")}</div>
+        <div class="muted">${co.phone ? "☎ " + escapeHtml(co.phone) : ""} ${co.email ? " · ✉ " + escapeHtml(co.email) : ""}</div>
+        <div class="muted"><b>GSTIN:</b> ${escapeHtml(co.gstin || "—")} ${co.pan ? " · <b>PAN:</b> " + escapeHtml(co.pan) : ""}</div>
+      </div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:16px;font-weight:700">TAX INVOICE</div>
+      <div class="muted"><b>No:</b> ${escapeHtml(inv.invoice_no)}</div>
+      <div class="muted"><b>Date:</b> ${inv.date}</div>
+      ${inv.due_date ? `<div class="muted"><b>Due:</b> ${inv.due_date}</div>` : ""}
+    </div>
   </div>
-  <table><thead><tr><th>#</th><th>Item</th><th>HSN</th><th>Unit</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">GST%</th><th class="num">Amount</th></tr></thead><tbody>${lines}</tbody></table>
-  <table class="tot" style="border:0"><tr><td style="border:0">Subtotal</td><td style="border:0" class="num">₹${inv.subtotal.toFixed(2)}</td></tr>
-  ${!inv.is_igst ? `<tr><td style="border:0">CGST</td><td style="border:0" class="num">₹${inv.cgst.toFixed(2)}</td></tr><tr><td style="border:0">SGST</td><td style="border:0" class="num">₹${inv.sgst.toFixed(2)}</td></tr>` : `<tr><td style="border:0">IGST</td><td style="border:0" class="num">₹${inv.igst.toFixed(2)}</td></tr>`}
-  <tr><td style="border:0">Round Off</td><td style="border:0" class="num">₹${inv.round_off.toFixed(2)}</td></tr></table>
-  <div class="grand">Grand Total: ₹ ${inv.grand_total.toFixed(2)}</div>
-  <div class="muted" style="margin-top:20px">This is a system-generated invoice. WCC ref: ${escapeHtml(inv.wcc_filename || "-")}</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <div class="box"><div class="muted">Bill To</div><b>${escapeHtml(inv.customer || "-")}</b><br/>${escapeHtml(inv.customer_address || "")}<br/><span class="muted">GSTIN:</span> ${escapeHtml(inv.customer_gstin || "-")}</div>
+    <div class="box"><div class="muted">Place of Supply</div><b>${escapeHtml(inv.place_of_supply || "-")}</b><br/><span class="muted">Tax:</span> ${inv.is_igst ? "IGST (Inter-state)" : "CGST + SGST"}<br/>${inv.wcc_filename ? `<span class="muted">WCC Ref:</span> ${escapeHtml(inv.wcc_filename)}` : ""}</div>
+  </div>
+  <table><thead><tr><th>#</th><th>Item Description</th><th>HSN</th><th>Unit</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">GST%</th><th class="num">Amount</th></tr></thead><tbody>${lines}</tbody></table>
+  <div class="bottom">
+    <div>
+      <div class="words"><b>Amount in Words:</b> ${escapeHtml(words)}</div>
+      ${co.bank_name ? `<div class="box bank" style="margin-top:8px"><div class="muted" style="margin-bottom:4px"><b>BANK DETAILS</b></div>
+        <b>Bank:</b> ${escapeHtml(co.bank_name || "")}<br/>
+        <b>A/c No:</b> ${escapeHtml(co.account_number || "")}<br/>
+        <b>IFSC:</b> ${escapeHtml(co.ifsc || "")}<br/>
+        ${co.branch ? `<b>Branch:</b> ${escapeHtml(co.branch)}` : ""}
+      </div>` : ""}
+    </div>
+    <div class="totals">
+      <table>
+        <tr><td>Subtotal</td><td class="num">₹ ${inv.subtotal.toFixed(2)}</td></tr>
+        ${!inv.is_igst ? `<tr><td>CGST</td><td class="num">₹ ${inv.cgst.toFixed(2)}</td></tr><tr><td>SGST</td><td class="num">₹ ${inv.sgst.toFixed(2)}</td></tr>` : `<tr><td>IGST</td><td class="num">₹ ${inv.igst.toFixed(2)}</td></tr>`}
+        <tr><td>Round Off</td><td class="num">₹ ${inv.round_off.toFixed(2)}</td></tr>
+      </table>
+      <div class="grand">Grand Total: ₹ ${inv.grand_total.toFixed(2)}</div>
+      ${inv.payment_status === "Paid" ? `<div style="margin-top:6px;padding:4px;background:#dcfce7;color:#065f46;text-align:center;border-radius:4px;font-weight:700">PAID</div>` : ""}
+    </div>
+  </div>
+  <div class="sig"><div><b>Customer's Signature</b></div><div style="text-align:right"><b>For ${escapeHtml(co.name || "R K ENTERPRISES")}</b><br/><br/><br/>Authorised Signatory</div></div>
+  <div class="foot">${escapeHtml(co.invoice_footer || "")}<br/>This is a computer-generated invoice.</div>
   <script>window.onload=()=>{setTimeout(()=>window.print(),300)};</script></body></html>`);
   w.document.close();
 }

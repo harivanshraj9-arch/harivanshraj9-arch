@@ -155,6 +155,9 @@ class Invoice(BaseModel):
     grand_total: float = 0.0
     notes: str = ""
     wcc_filename: Optional[str] = None
+    payment_status: Literal["Unpaid", "Partly Paid", "Paid", "Overdue"] = "Unpaid"
+    paid_amount: float = 0.0
+    due_date: Optional[str] = None
     created_at: str = Field(default_factory=_now)
 
 
@@ -177,6 +180,29 @@ class InvoiceCreate(BaseModel):
     lines: List[InvoiceLineIn]
     notes: str = ""
     wcc_filename: Optional[str] = None
+    due_date: Optional[str] = None
+
+
+class PaymentUpdate(BaseModel):
+    payment_status: Optional[Literal["Unpaid", "Partly Paid", "Paid", "Overdue"]] = None
+    paid_amount: Optional[float] = None
+    due_date: Optional[str] = None
+
+
+class CompanySettings(BaseModel):
+    name: str = "R K ENTERPRISES"
+    gstin: str = ""
+    pan: str = ""
+    address: str = ""
+    phone: str = ""
+    email: str = ""
+    bank_name: str = ""
+    account_number: str = ""
+    ifsc: str = ""
+    branch: str = ""
+    logo: Optional[str] = None  # data URL
+    invoice_prefix: str = "RKE"
+    invoice_footer: str = "Thank you for your business."
 
 
 # ============================================================
@@ -601,7 +627,8 @@ async def create_invoice(payload: InvoiceCreate):
         customer_address=payload.customer_address, place_of_supply=payload.place_of_supply,
         is_igst=payload.is_igst,
         lines=[InvoiceLine(**l) for l in resolved_lines],
-        notes=payload.notes, wcc_filename=payload.wcc_filename, **totals,
+        notes=payload.notes, wcc_filename=payload.wcc_filename,
+        due_date=payload.due_date, **totals,
     ).model_dump()
     await _db().invoices.insert_one(inv)
     await audit("create", "invoice", inv["id"], f"Invoice {inv_no} · ₹{inv['grand_total']}")
@@ -660,6 +687,72 @@ async def export_invoice_excel(inv_id: str):
     return StreamingResponse(buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{doc["invoice_no"].replace("/", "_")}.xlsx"'})
+
+
+# ============================================================
+# INIT
+# ============================================================
+@billing_router.patch("/invoices/{inv_id}/payment")
+async def update_payment(inv_id: str, patch: PaymentUpdate):
+    inv = await _db().invoices.find_one({"id": inv_id}, {"_id": 0})
+    if not inv:
+        raise HTTPException(404, "Not found")
+    updates = {k: v for k, v in patch.model_dump().items() if v is not None}
+    # Auto-derive status if paid_amount changed
+    if "paid_amount" in updates and "payment_status" not in updates:
+        pa = float(updates["paid_amount"])
+        gt = float(inv["grand_total"])
+        if pa <= 0: updates["payment_status"] = "Unpaid"
+        elif pa >= gt - 0.5: updates["payment_status"] = "Paid"
+        else: updates["payment_status"] = "Partly Paid"
+    if "payment_status" in updates and updates["payment_status"] == "Paid" and "paid_amount" not in updates:
+        updates["paid_amount"] = float(inv["grand_total"])
+    result = await _db().invoices.find_one_and_update(
+        {"id": inv_id}, {"$set": updates},
+        return_document=True, projection={"_id": 0},
+    )
+    await audit("payment_update", "invoice", inv_id, f"{inv['invoice_no']} · {updates}")
+    return result
+
+
+@billing_router.get("/dashboard/summary")
+async def billing_dashboard():
+    """Outstanding + monthly billed + counts by status for a dashboard tile."""
+    docs = await _db().invoices.find({}, {"_id": 0}).to_list(50000)
+    today = date.today().isoformat()
+    total_billed = sum(d["grand_total"] for d in docs)
+    total_paid = sum(d.get("paid_amount", 0) or 0 for d in docs)
+    outstanding = total_billed - total_paid
+    by_status = {"Unpaid": 0, "Partly Paid": 0, "Paid": 0, "Overdue": 0}
+    overdue_amount = 0.0
+    for d in docs:
+        st = d.get("payment_status", "Unpaid")
+        by_status[st] = by_status.get(st, 0) + 1
+        due = d.get("due_date")
+        if due and due < today and st != "Paid":
+            overdue_amount += (d["grand_total"] - (d.get("paid_amount", 0) or 0))
+    return {
+        "total_invoices": len(docs),
+        "total_billed": round(total_billed, 2),
+        "total_paid": round(total_paid, 2),
+        "outstanding": round(outstanding, 2),
+        "overdue_amount": round(overdue_amount, 2),
+        "by_status": by_status,
+    }
+
+
+@billing_router.get("/company")
+async def get_company():
+    doc = await _db().company.find_one({"_id": "default"}) or {}
+    doc.pop("_id", None)
+    return {**CompanySettings().model_dump(), **doc}
+
+
+@billing_router.post("/company")
+async def save_company(payload: CompanySettings):
+    await _db().company.update_one({"_id": "default"}, {"$set": {**payload.model_dump(), "updated_at": _now()}}, upsert=True)
+    await audit("update", "company", "default", f"Company details saved")
+    return await get_company()
 
 
 # ============================================================

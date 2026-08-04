@@ -24,4 +24,8 @@ export const billingApi = {
   getInvoice: async (id) => (await http.get(`/billing/invoices/${id}`)).data,
   deleteInvoice: async (id) => (await http.delete(`/billing/invoices/${id}`)).data,
   invoiceExcelUrl: (id) => `${http.defaults.baseURL}/billing/invoices/${id}/export`,
+  updatePayment: async (id, payload) => (await http.patch(`/billing/invoices/${id}/payment`, payload)).data,
+  summary: async () => (await http.get("/billing/dashboard/summary")).data,
+  getCompany: async () => (await http.get("/billing/company")).data,
+  saveCompany: async (p) => (await http.post("/billing/company", p)).data,
 };
