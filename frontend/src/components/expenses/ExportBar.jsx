@@ -1,11 +1,13 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
-import { Download, Printer, FileSpreadsheet, HardDriveDownload, HardDriveUpload } from "lucide-react";
+import { Download, Printer, FileSpreadsheet, HardDriveDownload, HardDriveUpload, FileUp } from "lucide-react";
 import { expenseApi } from "@/lib/expenseApi";
 import { inr } from "@/lib/format";
+import ImportDialog from "@/components/expenses/ImportDialog";
 
 export default function ExportBar({ filters, rows = [], summary, onRestored }) {
   const fileRef = useRef(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const downloadExcel = () => {
     const url = expenseApi.exportExcelUrl(filters);
@@ -107,6 +109,13 @@ export default function ExportBar({ filters, rows = [], summary, onRestored }) {
 
   return (
     <div data-testid="export-bar" className="flex flex-wrap gap-2">
+      <button
+        data-testid="btn-import-excel"
+        onClick={() => setImportOpen(true)}
+        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[hsl(var(--primary))] text-white text-xs font-semibold hover:opacity-90 transition-opacity"
+      >
+        <FileUp className="w-3.5 h-3.5" /> Import Excel
+      </button>
       <ActionBtn testid="btn-export-excel" onClick={downloadExcel} icon={FileSpreadsheet} label="Excel" />
       <ActionBtn testid="btn-export-pdf" onClick={savePDF} icon={Download} label="PDF" />
       <ActionBtn testid="btn-print" onClick={printReport} icon={Printer} label="Print" />
@@ -119,6 +128,7 @@ export default function ExportBar({ filters, rows = [], summary, onRestored }) {
         <HardDriveUpload className="w-3.5 h-3.5" /> Restore
       </button>
       <input ref={fileRef} type="file" accept="application/json" onChange={restore} className="hidden" />
+      <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} onImported={onRestored} />
     </div>
   );
 }

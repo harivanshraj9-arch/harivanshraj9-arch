@@ -1,17 +1,18 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import io
+import re
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, field_validator
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict, Any
 import uuid
 from datetime import datetime, timezone, date, timedelta
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -687,6 +688,317 @@ async def restore_expenses(payload: RestorePayload):
             pass
 
     return {"restored_expenses": added, "restored_budgets": len(payload.budgets), "mode": payload.mode}
+
+# ---------- Excel Import ----------
+HEADER_ALIASES = {
+    "date": ["date", "dt", "expense date", "exp date", "day date", "txn date", "transaction date"],
+    "category": ["category", "cat", "type", "expense category", "head"],
+    "amount": ["amount", "amt", "value", "cost", "price", "total", "expense", "rs", "inr", "amount (rs)", "amount (inr)", "amount (₹)"],
+    "payment_mode": ["payment mode", "paymentmode", "mode", "payment", "pay mode", "pay method", "method", "pay"],
+    "description": ["description", "desc", "remarks", "remark", "notes", "note", "details", "detail", "particulars", "narration"],
+    "attachment": ["attachment", "attach", "bill", "receipt", "file", "attachment name"],
+}
+
+
+def _norm_header(s: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(s or "").strip().lower()).strip()
+
+
+def _map_headers(header_row: List[Any]) -> Dict[str, int]:
+    """Return field_name -> column_index (0-based), None if not found."""
+    normalized = [_norm_header(h) for h in header_row]
+    mapping: Dict[str, int] = {}
+    for field, aliases in HEADER_ALIASES.items():
+        alias_norms = [_norm_header(a) for a in aliases]
+        for idx, h in enumerate(normalized):
+            if h and h in alias_norms:
+                mapping[field] = idx
+                break
+    return mapping
+
+
+def _parse_cell_date(v: Any) -> Optional[str]:
+    if v is None or v == "":
+        return None
+    if isinstance(v, datetime):
+        return v.date().isoformat()
+    if isinstance(v, date):
+        return v.isoformat()
+    s = str(v).strip()
+    if not s:
+        return None
+    # Try ISO first, then common formats
+    formats = ["%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y",
+               "%d.%m.%Y", "%Y/%m/%d", "%d-%b-%Y", "%d %b %Y",
+               "%d-%B-%Y", "%d %B %Y", "%b %d, %Y", "%B %d, %Y"]
+    for fmt in formats:
+        try:
+            return datetime.strptime(s, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_cell_amount(v: Any) -> Optional[float]:
+    if v is None or v == "":
+        return None
+    if isinstance(v, (int, float)):
+        return float(v) if v > 0 else None
+    s = str(v).strip()
+    # Strip currency symbols, commas, spaces
+    s = re.sub(r"[₹$€£,\s]", "", s)
+    # Handle parentheses (negative) - treat as invalid for expense
+    if "(" in s or ")" in s:
+        return None
+    try:
+        val = float(s)
+        return val if val > 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _normalize_payment_mode(v: Any) -> str:
+    s = str(v or "").strip().lower()
+    if not s:
+        return "Cash"
+    if "upi" in s or "gpay" in s or "phonepe" in s or "paytm" in s:
+        return "UPI"
+    if "card" in s or "credit" in s or "debit" in s:
+        return "Card"
+    if "bank" in s or "neft" in s or "rtgs" in s or "imps" in s or "transfer" in s or "cheque" in s or "check" in s:
+        return "Bank"
+    if "cash" in s:
+        return "Cash"
+    return "Cash"
+
+
+def _sanitize_str(v: Any, max_len: int = 500) -> str:
+    return str(v or "").strip()[:max_len]
+
+
+class PreviewRow(BaseModel):
+    row: int
+    date: Optional[str] = None
+    category: Optional[str] = None
+    amount: Optional[float] = None
+    payment_mode: Optional[str] = None
+    description: Optional[str] = None
+    attachment_name: Optional[str] = None
+    valid: bool = True
+    is_duplicate: bool = False
+    errors: List[str] = []
+
+
+class ImportCommitPayload(BaseModel):
+    rows: List[Dict[str, Any]]
+    skip_duplicates: bool = True
+
+
+async def _existing_signatures() -> set:
+    """Return set of duplicate signatures already in DB."""
+    docs = await db.expenses.find({}, {"_id": 0, "date": 1, "amount": 1, "category": 1, "description": 1}).to_list(200000)
+    sigs = set()
+    for d in docs:
+        sig = f"{d.get('date','')}|{round(float(d.get('amount',0) or 0), 2)}|{(d.get('category','') or '').strip().lower()}|{(d.get('description','') or '').strip().lower()}"
+        sigs.add(sig)
+    return sigs
+
+
+@api_router.post("/expenses/import/preview")
+async def import_preview(file: UploadFile = File(...)):
+    filename = (file.filename or "").lower()
+    if not (filename.endswith(".xlsx") or filename.endswith(".xls") or filename.endswith(".xlsm")):
+        raise HTTPException(status_code=400, detail="Only .xlsx / .xls / .xlsm files supported")
+
+    try:
+        content = await file.read()
+        wb = load_workbook(filename=io.BytesIO(content), data_only=True, read_only=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read Excel file: {e}")
+
+    ws = wb.active
+    rows_iter = ws.iter_rows(values_only=True)
+    try:
+        header = list(next(rows_iter))
+    except StopIteration:
+        raise HTTPException(status_code=400, detail="Excel file is empty")
+
+    mapping = _map_headers(header)
+    required = ["date", "category", "amount"]
+    missing = [r for r in required if r not in mapping]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required columns: {', '.join(missing)}. Found headers: {header}",
+        )
+
+    existing_sigs = await _existing_signatures()
+
+    known_categories = set(c.lower() for c in EXPENSE_CATEGORIES)
+
+    parsed: List[PreviewRow] = []
+    empty_skipped = 0
+    row_num = 1
+    for raw_row in rows_iter:
+        row_num += 1
+        if raw_row is None:
+            empty_skipped += 1
+            continue
+        # empty row: all None/empty
+        if all(c is None or str(c).strip() == "" for c in raw_row):
+            empty_skipped += 1
+            continue
+
+        def cell(field):
+            idx = mapping.get(field)
+            return raw_row[idx] if idx is not None and idx < len(raw_row) else None
+
+        pr = PreviewRow(row=row_num, errors=[])
+        # Date
+        dstr = _parse_cell_date(cell("date"))
+        if not dstr:
+            pr.errors.append("Invalid or missing date")
+        else:
+            pr.date = dstr
+        # Amount
+        amt = _parse_cell_amount(cell("amount"))
+        if amt is None:
+            pr.errors.append("Amount must be a positive number")
+        else:
+            pr.amount = round(amt, 2)
+        # Category
+        cat = _sanitize_str(cell("category"), 60)
+        if not cat:
+            pr.errors.append("Category is required")
+        else:
+            # Match preset case-insensitively, else keep as custom
+            matched = next((c for c in EXPENSE_CATEGORIES if c.lower() == cat.lower()), None)
+            pr.category = matched or cat
+        # Payment mode
+        pm_raw = cell("payment_mode")
+        pr.payment_mode = _normalize_payment_mode(pm_raw)
+        # Description
+        pr.description = _sanitize_str(cell("description"), 1000)
+        # Attachment
+        att = cell("attachment")
+        pr.attachment_name = _sanitize_str(att, 200) or None
+
+        pr.valid = len(pr.errors) == 0
+
+        if pr.valid:
+            sig = f"{pr.date}|{round(float(pr.amount), 2)}|{pr.category.strip().lower()}|{(pr.description or '').strip().lower()}"
+            pr.is_duplicate = sig in existing_sigs
+
+        parsed.append(pr)
+
+    counts = {
+        "total_rows": len(parsed),
+        "valid": sum(1 for p in parsed if p.valid),
+        "invalid": sum(1 for p in parsed if not p.valid),
+        "duplicates": sum(1 for p in parsed if p.valid and p.is_duplicate),
+        "empty_skipped": empty_skipped,
+    }
+
+    # New (custom) categories detected among valid rows
+    new_categories = sorted({
+        p.category for p in parsed
+        if p.valid and p.category and p.category.lower() not in known_categories
+    })
+
+    return {
+        "filename": file.filename,
+        "headers": [str(h) if h is not None else "" for h in header],
+        "header_map": mapping,
+        "counts": counts,
+        "new_categories": new_categories,
+        "rows": [p.model_dump() for p in parsed],
+    }
+
+
+@api_router.post("/expenses/import/commit")
+async def import_commit(payload: ImportCommitPayload):
+    """Bulk-insert rows previously validated by /import/preview."""
+    to_insert = []
+    imported = 0
+    skipped_duplicate = 0
+    failed = 0
+    errors: List[Dict[str, Any]] = []
+
+    existing_sigs = await _existing_signatures()
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    for r in payload.rows:
+        try:
+            if not r.get("valid", True):
+                failed += 1
+                errors.append({"row": r.get("row"), "error": "; ".join(r.get("errors", []))})
+                continue
+
+            date_s = r.get("date")
+            amount = r.get("amount")
+            category = _sanitize_str(r.get("category"), 60)
+            payment_mode = r.get("payment_mode") or "Cash"
+            description = _sanitize_str(r.get("description"), 1000)
+            attachment_name = _sanitize_str(r.get("attachment_name"), 200) or None
+
+            if not date_s or amount is None or amount <= 0 or not category:
+                failed += 1
+                errors.append({"row": r.get("row"), "error": "Missing required fields"})
+                continue
+
+            if payment_mode not in PAYMENT_MODES:
+                payment_mode = "Cash"
+
+            sig = f"{date_s}|{round(float(amount), 2)}|{category.strip().lower()}|{description.strip().lower()}"
+            if sig in existing_sigs:
+                if payload.skip_duplicates:
+                    skipped_duplicate += 1
+                    continue
+                # else: allow duplicate (fall through)
+
+            doc = {
+                "id": str(uuid.uuid4()),
+                "date": date_s,
+                "category": category,
+                "amount": round(float(amount), 2),
+                "payment_mode": payment_mode,
+                "description": description,
+                "attachment": None,
+                "attachment_name": attachment_name,
+                "created_at": now_iso,
+                "updated_at": now_iso,
+            }
+            to_insert.append(doc)
+            existing_sigs.add(sig)  # avoid duplicates within batch
+            imported += 1
+
+            # Batch insert every 1000
+            if len(to_insert) >= 1000:
+                await db.expenses.insert_many(to_insert, ordered=False)
+                to_insert = []
+        except Exception as e:
+            failed += 1
+            errors.append({"row": r.get("row"), "error": str(e)[:200]})
+
+    if to_insert:
+        try:
+            await db.expenses.insert_many(to_insert, ordered=False)
+        except Exception as e:
+            failed += len(to_insert)
+            imported -= len(to_insert)
+            errors.append({"row": 0, "error": f"Batch insert failed: {str(e)[:200]}"})
+
+    return {
+        "total_rows": len(payload.rows),
+        "imported": imported,
+        "skipped_duplicate": skipped_duplicate,
+        "failed": failed,
+        "errors": errors[:200],  # cap
+    }
+
+
+
 
 
 # ============================================================
