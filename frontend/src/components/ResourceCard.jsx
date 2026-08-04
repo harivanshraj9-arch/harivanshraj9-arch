@@ -55,14 +55,17 @@ export default function ResourceCard({ resource, onOpen, onToggleStar }) {
           <KindIcon className="w-3.5 h-3.5" />
           <span className="uppercase tracking-wider text-[10px] font-bold">{resource.kind}</span>
         </div>
-        <button
+        <a
           data-testid={`open-resource-${resource.sno}`}
+          href={resource.url}
+          target="_blank"
+          rel="noopener noreferrer"
           onClick={() => onOpen(resource)}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-foreground text-background text-xs font-semibold group-hover:bg-[hsl(var(--primary))] transition-colors"
         >
           Open
           <ArrowUpRight className="w-3.5 h-3.5" />
-        </button>
+        </a>
       </div>
     </motion.div>
   );

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Menu, X, Zap } from "lucide-react";
+import { Menu, X, Zap, Wallet, ArrowRight } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import Sidebar from "@/components/Sidebar";
 import Hero from "@/components/Hero";
@@ -10,29 +11,36 @@ import CategoryFilter from "@/components/CategoryFilter";
 import SearchBar from "@/components/SearchBar";
 import StatsCharts from "@/components/StatsCharts";
 import ActivityFeed from "@/components/ActivityFeed";
+import ExpenseSummaryCards from "@/components/expenses/ExpenseSummaryCards";
 import { fetchResources, fetchStats, fetchActivity, logActivity, toggleStar } from "@/lib/api";
+import { expenseApi } from "@/lib/expenseApi";
 import { useTheme } from "@/lib/theme";
 
 export default function DashboardPage() {
   const { theme, toggle } = useTheme();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [resources, setResources] = useState([]);
   const [stats, setStats] = useState(null);
   const [activity, setActivity] = useState([]);
+  const [expenseSummary, setExpenseSummary] = useState(null);
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState("All");
+  const [category, setCategory] = useState(() => location.state?.category || "All");
   const [loading, setLoading] = useState(true);
   const [mobileNav, setMobileNav] = useState(false);
 
   const load = async () => {
     try {
-      const [r, s, a] = await Promise.all([
+      const [r, s, a, es] = await Promise.all([
         fetchResources(),
         fetchStats(),
         fetchActivity(8),
+        expenseApi.summary().catch(() => null),
       ]);
       setResources(r);
       setStats(s);
       setActivity(a);
+      setExpenseSummary(es);
     } catch (e) {
       console.error(e);
       toast.error("Could not load dashboard data");
@@ -42,6 +50,13 @@ export default function DashboardPage() {
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (location.state?.category) {
+      setCategory(location.state.category);
+      window.history.replaceState({}, "");
+    }
+  }, [location.state]);
 
   const counts = useMemo(() => {
     const c = {};
@@ -67,12 +82,10 @@ export default function DashboardPage() {
   const starredResources = useMemo(() => resources.filter((r) => r.starred).slice(0, 6), [resources]);
 
   const handleOpen = async (r) => {
-    window.open(r.url, "_blank", "noopener,noreferrer");
     try {
       await logActivity(r.id, "opened");
-      const a = await fetchActivity(8);
+      const [a, s] = await Promise.all([fetchActivity(8), fetchStats()]);
       setActivity(a);
-      const s = await fetchStats();
       setStats(s);
     } catch (e) { /* silent */ }
   };
@@ -137,7 +150,7 @@ export default function DashboardPage() {
               <div className="w-8 h-8 rounded-md bg-foreground text-background flex items-center justify-center">
                 <Zap className="w-4 h-4" />
               </div>
-              <span className="font-heading font-black">Master Grid</span>
+              <span className="font-heading font-black">Prathvi Power</span>
             </div>
             <div className="flex-1 max-w-2xl">
               <SearchBar value={query} onChange={setQuery} />
@@ -152,6 +165,29 @@ export default function DashboardPage() {
         <div className="px-4 sm:px-8 py-8 space-y-8 max-w-[1600px]">
           {/* Hero */}
           <Hero total={stats?.total_resources || 0} categories={stats?.categories || 0} />
+
+          {/* Daily Expenses snapshot */}
+          {expenseSummary && (
+            <section data-testid="overview-expenses-snapshot">
+              <div className="mb-4 flex items-end justify-between flex-wrap gap-2">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">Finance</div>
+                  <h2 className="font-heading text-2xl font-bold mt-1 flex items-center gap-2">
+                    <Wallet className="w-5 h-5 text-[hsl(var(--primary))]" />
+                    Daily Expenses
+                  </h2>
+                </div>
+                <button
+                  data-testid="open-expenses-module"
+                  onClick={() => navigate("/expenses")}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-foreground text-background text-sm font-semibold hover:scale-[0.98] transition-transform"
+                >
+                  Open module <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+              <ExpenseSummaryCards summary={expenseSummary} compact />
+            </section>
+          )}
 
           {/* KPIs */}
           <section>
@@ -246,7 +282,7 @@ export default function DashboardPage() {
           </section>
 
           <footer className="pt-6 pb-10 border-t border-border flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
-            <div>© 2026 Polaris × MVVNL Master Dashboard</div>
+            <div>© 2026 Prathvi Power Solutions · Master Dashboard</div>
             <div className="flex items-center gap-2">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
               All grid nodes reporting

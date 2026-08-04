@@ -26,7 +26,7 @@ export default function Hero({ total = 0, categories = 0 }) {
           </span>
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[hsl(var(--energy))]/15 text-foreground border border-[hsl(var(--energy))]/30 text-[11px] font-bold uppercase tracking-wider">
             <Sparkles className="w-3 h-3" />
-            Polaris × MVVNL
+            Prathvi Power Solutions
           </span>
         </div>
 
@@ -48,7 +48,7 @@ export default function Hero({ total = 0, categories = 0 }) {
           className="mt-4 max-w-2xl text-sm sm:text-base text-muted-foreground"
         >
           A single dashboard for quality control, workforce, finance, inventory
-          and every document keeping the Polaris grid running clean.
+          and every document keeping your operations running clean.
         </motion.p>
 
         <div className="mt-8 flex flex-wrap gap-3">
