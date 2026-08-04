@@ -14,6 +14,7 @@ const TABS = [
   { key: "new", label: "New Invoice (WCC)", icon: Sparkles },
   { key: "bulk", label: "Bulk WCC", icon: Upload },
   { key: "invoices", label: "Invoices", icon: FileText },
+  { key: "statement", label: "Statement", icon: ScrollText },
   { key: "company", label: "Company", icon: History },
   { key: "audit", label: "Audit Log", icon: ScrollText },
 ];
@@ -67,6 +68,7 @@ export default function BillingPage() {
           {tab === "new" && <NewInvoice />}
           {tab === "bulk" && <BulkWCC />}
           {tab === "invoices" && <InvoiceList />}
+          {tab === "statement" && <StatementPage />}
           {tab === "company" && <CompanyForm />}
           {tab === "audit" && <AuditLog />}
           <footer className="pt-6 pb-10 border-t border-border text-xs text-muted-foreground">© 2026 Prathvi Power Solutions · Vendor Billing</footer>
@@ -509,31 +511,114 @@ function InvoiceList() {
 }
 
 function PayDialog({ invoice, onClose, onSaved }) {
-  const [status, setStatus] = useState(invoice.payment_status || "Unpaid");
-  const [paid, setPaid] = useState(invoice.paid_amount || 0);
-  const [due, setDue] = useState(invoice.due_date || "");
-  const save = async () => {
-    try {
-      await billingApi.updatePayment(invoice.id, { payment_status: status, paid_amount: parseFloat(paid) || 0, due_date: due || null });
-      toast.success("Payment updated"); onSaved();
-    } catch { toast.error("Failed"); }
+  const [history, setHistory] = useState([]);
+  const [form, setForm] = useState({
+    date: new Date().toISOString().slice(0, 10),
+    amount: "", method: "Bank", reference: "", remarks: "",
+  });
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    const d = await billingApi.listPayments(invoice.id);
+    setHistory(d.items);
   };
+  useEffect(() => { load(); }, []); // eslint-disable-line
+
+  const totalPaid = history.reduce((s, p) => s + Number(p.amount || 0), 0);
+  const outstanding = Number(invoice.grand_total) - totalPaid;
+
+  const addPayment = async (e) => {
+    e.preventDefault();
+    const amt = parseFloat(form.amount);
+    if (!amt || amt <= 0) { toast.error("Amount must be > 0"); return; }
+    if (form.method === "Cheque" && !form.reference.trim()) { toast.error("Cheque number required"); return; }
+    setBusy(true);
+    try {
+      await billingApi.addPayment(invoice.id, { ...form, amount: amt });
+      toast.success(`Payment ₹${amt} logged`);
+      setForm({ date: new Date().toISOString().slice(0, 10), amount: "", method: form.method, reference: "", remarks: "" });
+      await load();
+      onSaved?.();
+    } catch { toast.error("Failed"); }
+    finally { setBusy(false); }
+  };
+
+  const removePayment = async (pid) => {
+    if (!window.confirm("Remove this payment entry?")) return;
+    try { await billingApi.deletePayment(pid); await load(); onSaved?.(); toast.success("Removed"); }
+    catch { toast.error("Failed"); }
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-md bg-card border border-border rounded-2xl p-5">
-        <h3 className="font-heading text-lg font-bold mb-4">Payment · {invoice.invoice_no}</h3>
-        <div className="grid grid-cols-1 gap-3">
-          <F label="Status">
-            <Sel value={status} onChange={setStatus} options={["Unpaid", "Partly Paid", "Paid", "Overdue"]} />
-          </F>
-          <F label={`Paid Amount (of ${inr(invoice.grand_total)})`}>
-            <Num data-testid="pay-amount" value={paid} onChange={setPaid} />
-          </F>
-          <F label="Due Date"><I type="date" value={due} onChange={setDue} /></F>
+      <div className="w-full max-w-2xl bg-card border border-border rounded-2xl overflow-hidden max-h-[92vh] flex flex-col">
+        <div className="flex items-center justify-between p-4 border-b border-border">
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">Payment History</div>
+            <h3 className="font-heading text-lg font-bold">{invoice.invoice_no}</h3>
+          </div>
+          <button onClick={onClose} className="w-9 h-9 rounded-md hover:bg-muted flex items-center justify-center"><X className="w-4 h-4" /></button>
         </div>
-        <div className="mt-5 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 rounded-full border border-border text-sm font-semibold hover:bg-muted">Cancel</button>
-          <button data-testid="pay-save" onClick={save} className="inline-flex items-center gap-1.5 px-5 py-2 rounded-full bg-foreground text-background text-sm font-semibold"><Save className="w-4 h-4" /> Save</button>
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="rounded-lg bg-muted p-2"><div className="text-[10px] uppercase text-muted-foreground font-bold">Invoice</div><div className="font-bold tabular-nums text-sm">{inr(invoice.grand_total)}</div></div>
+            <div className="rounded-lg bg-emerald-500/10 p-2"><div className="text-[10px] uppercase text-emerald-500 font-bold">Paid</div><div className="font-bold tabular-nums text-sm text-emerald-500">{inr(totalPaid)}</div></div>
+            <div className={`rounded-lg p-2 ${outstanding > 0.5 ? "bg-[hsl(var(--energy))]/15" : "bg-muted"}`}><div className={`text-[10px] uppercase font-bold ${outstanding > 0.5 ? "text-[hsl(var(--energy))]" : "text-muted-foreground"}`}>Outstanding</div><div className={`font-bold tabular-nums text-sm ${outstanding > 0.5 ? "text-[hsl(var(--energy))]" : ""}`}>{inr(Math.max(0, outstanding))}</div></div>
+          </div>
+
+          <form onSubmit={addPayment} className="rounded-xl border border-border p-3">
+            <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground mb-2">Add Payment</div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <F label="Date"><I type="date" value={form.date} onChange={v => setForm(f => ({ ...f, date: v }))} /></F>
+              <F label="Amount (₹)*"><Num data-testid="ph-amount" value={form.amount} onChange={v => setForm(f => ({ ...f, amount: v }))} /></F>
+              <F label="Method">
+                <Sel value={form.method} onChange={v => setForm(f => ({ ...f, method: v }))} options={["Bank", "UPI", "Cash", "Cheque", "Card", "Other"]} />
+              </F>
+              <F label={form.method === "Cheque" ? "Cheque No.*" : "Reference / UTR"}><I data-testid="ph-ref" value={form.reference} onChange={v => setForm(f => ({ ...f, reference: v }))} /></F>
+              <F label="Remarks" full><I value={form.remarks} onChange={v => setForm(f => ({ ...f, remarks: v }))} /></F>
+            </div>
+            <div className="mt-3 flex justify-end gap-2">
+              <button data-testid="ph-mark-full" type="button" disabled={outstanding <= 0.5} onClick={() => setForm(f => ({ ...f, amount: outstanding.toFixed(2) }))}
+                className="text-xs px-3 py-1.5 rounded-full border border-border hover:bg-muted disabled:opacity-40">
+                Fill Outstanding
+              </button>
+              <button data-testid="ph-add" type="submit" disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-foreground text-background text-sm font-semibold disabled:opacity-50">
+                <Plus className="w-4 h-4" /> Log Payment
+              </button>
+            </div>
+          </form>
+
+          <div>
+            <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground mb-2">Transactions ({history.length})</div>
+            {history.length === 0 ? (
+              <div className="text-sm text-muted-foreground py-6 text-center border border-dashed border-border rounded-lg">No payments logged yet</div>
+            ) : (
+              <div className="rounded-lg border border-border overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted"><tr><Th>Date</Th><Th>Method</Th><Th>Reference</Th><Th className="text-right">Amount</Th><Th>Remarks</Th><Th></Th></tr></thead>
+                  <tbody>
+                    {history.map(p => (
+                      <tr key={p.id} className="border-t border-border">
+                        <td className="px-3 py-1.5">{p.date}</td>
+                        <td className="px-3 py-1.5">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-muted">{p.method}</span>
+                        </td>
+                        <td className="px-3 py-1.5 font-mono text-[11px]">{p.reference || "—"}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums font-bold text-emerald-500">{inr(p.amount)}</td>
+                        <td className="px-3 py-1.5 text-muted-foreground max-w-[160px] truncate">{p.remarks}</td>
+                        <td className="px-3 py-1.5 text-right">
+                          <button onClick={() => removePayment(p.id)} className="w-7 h-7 rounded-md hover:bg-[hsl(var(--destructive))]/10 hover:text-[hsl(var(--destructive))] inline-flex items-center justify-center"><Trash2 className="w-3 h-3" /></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="p-4 border-t border-border bg-muted/30 flex justify-end">
+          <button onClick={onClose} className="px-4 py-2 rounded-full border border-border text-sm font-semibold hover:bg-muted">Close</button>
         </div>
       </div>
     </div>
@@ -672,6 +757,172 @@ function BulkWCC() {
       })}
     </div>
   );
+}
+
+/* ============= STATEMENT ============= */
+function StatementPage() {
+  const today = new Date();
+  const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+  const lastOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10);
+  const [customer, setCustomer] = useState("");
+  const [start, setStart] = useState(firstOfMonth);
+  const [end, setEnd] = useState(lastOfMonth);
+  const [data, setData] = useState(null);
+  const [company, setCompany] = useState(null);
+  const [customers, setCustomers] = useState([]);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    billingApi.getCompany().then(setCompany);
+    billingApi.listInvoices({}).then(d => {
+      const uniq = Array.from(new Set(d.items.map(i => i.customer).filter(Boolean)));
+      setCustomers(uniq);
+    });
+  }, []);
+
+  const generate = async () => {
+    if (!customer.trim()) { toast.error("Pick a customer"); return; }
+    setBusy(true);
+    try {
+      const d = await billingApi.statement(customer, start, end);
+      setData(d);
+    } catch (e) { toast.error("Failed"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="font-heading text-3xl font-black tracking-tight">Customer Statement</h1>
+        <p className="mt-1 text-sm text-muted-foreground">One printable sheet with all invoices, payments and outstanding balance for a customer in a given period.</p>
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card p-4 grid grid-cols-1 sm:grid-cols-4 gap-3">
+        <F label="Customer" full>
+          <input data-testid="st-customer" list="stmt-customers" value={customer} onChange={e => setCustomer(e.target.value)}
+            placeholder="Type or pick a customer name"
+            className="w-full h-10 px-3 rounded-lg bg-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))]" />
+          <datalist id="stmt-customers">{customers.map(c => <option key={c} value={c} />)}</datalist>
+        </F>
+        <F label="From"><I data-testid="st-start" type="date" value={start} onChange={setStart} /></F>
+        <F label="To"><I data-testid="st-end" type="date" value={end} onChange={setEnd} /></F>
+        <div className="flex items-end gap-2">
+          <button data-testid="st-generate" onClick={generate} disabled={busy}
+            className="inline-flex items-center gap-1.5 px-5 h-10 rounded-full bg-foreground text-background text-sm font-semibold disabled:opacity-50">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScrollText className="w-4 h-4" />}
+            Generate
+          </button>
+          {data && (
+            <button data-testid="st-print" onClick={() => printStatement(data, company)}
+              className="inline-flex items-center gap-1.5 px-4 h-10 rounded-full border border-border text-sm font-semibold hover:bg-muted">
+              <Printer className="w-4 h-4" /> Print
+            </button>
+          )}
+        </div>
+      </div>
+
+      {data && (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <SumTile testid="st-opening" label="Opening Balance" value={inr(data.opening_balance)} />
+            <SumTile testid="st-billed" label="Billed" value={inr(data.total_billed)} />
+            <SumTile testid="st-paid" label="Collected" value={inr(data.total_paid)} tint="text-emerald-500" />
+            <SumTile testid="st-closing" label="Closing Balance" value={inr(data.closing_balance)} tint={data.closing_balance > 0.5 ? "text-[hsl(var(--energy))]" : "text-emerald-500"} />
+          </div>
+
+          <div className="rounded-2xl border border-border bg-card overflow-hidden">
+            <div className="px-4 py-3 border-b border-border font-heading font-bold">Invoices ({data.invoices.length})</div>
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50"><tr><Th>Date</Th><Th>Invoice</Th><Th className="text-right">Amount</Th><Th className="text-right">Paid</Th><Th>Status</Th></tr></thead>
+              <tbody>
+                {data.invoices.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-muted-foreground text-sm">No invoices in this period</td></tr>}
+                {data.invoices.map(i => (
+                  <tr key={i.id} className="border-t border-border">
+                    <td className="px-3 py-1.5 text-xs">{i.date}</td>
+                    <td className="px-3 py-1.5 font-mono text-xs">{i.invoice_no}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums font-bold">{inr(i.grand_total)}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">{inr(i.paid_amount || 0)}</td>
+                    <td className="px-3 py-1.5"><span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${PAYMENT_STYLES[i.payment_status] || "bg-muted"}`}>{i.payment_status || "Unpaid"}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="rounded-2xl border border-border bg-card overflow-hidden">
+            <div className="px-4 py-3 border-b border-border font-heading font-bold">Payments ({data.payments.length})</div>
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50"><tr><Th>Date</Th><Th>Invoice</Th><Th>Method</Th><Th>Reference</Th><Th className="text-right">Amount</Th></tr></thead>
+              <tbody>
+                {data.payments.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-muted-foreground text-sm">No payments in this period</td></tr>}
+                {data.payments.map(p => (
+                  <tr key={p.id} className="border-t border-border">
+                    <td className="px-3 py-1.5 text-xs">{p.date}</td>
+                    <td className="px-3 py-1.5 font-mono text-xs">{p.invoice_no}</td>
+                    <td className="px-3 py-1.5"><span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold bg-muted">{p.method}</span></td>
+                    <td className="px-3 py-1.5 font-mono text-xs">{p.reference || "—"}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums font-bold text-emerald-500">{inr(p.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function printStatement(data, company) {
+  const w = window.open("", "_blank", "width=900,height=1100");
+  if (!w) { toast.error("Enable popups"); return; }
+  const co = company || {};
+  const invRows = data.invoices.map(i => `<tr><td>${i.date}</td><td>${escapeHtml(i.invoice_no)}</td><td class="num">₹${i.grand_total.toFixed(2)}</td><td class="num">₹${(i.paid_amount || 0).toFixed(2)}</td><td>${escapeHtml(i.payment_status || "Unpaid")}</td></tr>`).join("");
+  const payRows = data.payments.map(p => `<tr><td>${p.date}</td><td>${escapeHtml(p.invoice_no)}</td><td>${escapeHtml(p.method)}</td><td>${escapeHtml(p.reference || "")}</td><td class="num">₹${p.amount.toFixed(2)}</td></tr>`).join("");
+  w.document.write(`<!DOCTYPE html><html><head><title>Statement · ${escapeHtml(data.customer)}</title><style>
+    body{font-family:system-ui,sans-serif;padding:24px;color:#111;font-size:12px}
+    h1{margin:0}h2{margin:16px 0 6px}
+    .head{display:flex;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:10px;margin-bottom:14px;align-items:flex-start}
+    .logo{max-height:60px;max-width:80px;object-fit:contain}
+    .muted{color:#666;font-size:11px}
+    table{width:100%;border-collapse:collapse;font-size:11px;margin-top:6px}
+    th,td{border:1px solid #ccc;padding:5px 7px;text-align:left}th{background:#f4f4f5}
+    .num{text-align:right}
+    .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}
+    .kpi div{border:1px solid #ccc;padding:8px;border-radius:4px}
+    .kpi b{display:block;font-size:14px;margin-top:2px}
+    .closing{margin-top:16px;padding:10px;background:#111;color:#fff;text-align:right;font-weight:700;font-size:14px;border-radius:4px}
+  </style></head><body>
+  <div class="head">
+    <div style="display:flex;gap:12px">
+      ${co.logo ? `<img src="${co.logo}" class="logo" />` : ""}
+      <div>
+        <h1>${escapeHtml(co.name || "R K ENTERPRISES")}</h1>
+        <div class="muted">${escapeHtml(co.address || "")}</div>
+        <div class="muted">GSTIN: ${escapeHtml(co.gstin || "—")}</div>
+      </div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:16px;font-weight:700">STATEMENT OF ACCOUNT</div>
+      <div class="muted">Period: ${data.start || "start"} to ${data.end || "today"}</div>
+      <div class="muted">Generated: ${new Date().toLocaleDateString()}</div>
+    </div>
+  </div>
+  <div><b>Customer:</b> ${escapeHtml(data.customer)}</div>
+  <div class="kpi">
+    <div><span class="muted">Opening Balance</span><b>₹ ${data.opening_balance.toFixed(2)}</b></div>
+    <div><span class="muted">Total Billed</span><b>₹ ${data.total_billed.toFixed(2)}</b></div>
+    <div><span class="muted">Total Paid</span><b>₹ ${data.total_paid.toFixed(2)}</b></div>
+    <div><span class="muted">Closing Balance</span><b>₹ ${data.closing_balance.toFixed(2)}</b></div>
+  </div>
+  <h2>Invoices</h2>
+  <table><thead><tr><th>Date</th><th>Invoice</th><th class="num">Amount</th><th class="num">Paid</th><th>Status</th></tr></thead><tbody>${invRows || '<tr><td colspan="5" style="text-align:center">No invoices</td></tr>'}</tbody></table>
+  <h2>Payments Received</h2>
+  <table><thead><tr><th>Date</th><th>Invoice</th><th>Method</th><th>Reference</th><th class="num">Amount</th></tr></thead><tbody>${payRows || '<tr><td colspan="5" style="text-align:center">No payments</td></tr>'}</tbody></table>
+  <div class="closing">Closing Balance (Outstanding): ₹ ${data.closing_balance.toFixed(2)}</div>
+  <div class="muted" style="margin-top:20px;text-align:center">This is a computer-generated statement. Please pay the closing balance at your earliest convenience.</div>
+  <script>window.onload=()=>{setTimeout(()=>window.print(),300)};</script></body></html>`);
+  w.document.close();
 }
 
 /* ============= COMPANY SETTINGS ============= */

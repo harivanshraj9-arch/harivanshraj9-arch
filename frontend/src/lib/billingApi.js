@@ -28,4 +28,8 @@ export const billingApi = {
   summary: async () => (await http.get("/billing/dashboard/summary")).data,
   getCompany: async () => (await http.get("/billing/company")).data,
   saveCompany: async (p) => (await http.post("/billing/company", p)).data,
+  addPayment: async (id, p) => (await http.post(`/billing/invoices/${id}/payments`, p)).data,
+  listPayments: async (id) => (await http.get(`/billing/invoices/${id}/payments`)).data,
+  deletePayment: async (pid) => (await http.delete(`/billing/payments/${pid}`)).data,
+  statement: async (customer, start, end) => (await http.get("/billing/statement", { params: q({ customer, start, end }) })).data,
 };

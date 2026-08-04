@@ -698,7 +698,6 @@ async def update_payment(inv_id: str, patch: PaymentUpdate):
     if not inv:
         raise HTTPException(404, "Not found")
     updates = {k: v for k, v in patch.model_dump().items() if v is not None}
-    # Auto-derive status if paid_amount changed
     if "paid_amount" in updates and "payment_status" not in updates:
         pa = float(updates["paid_amount"])
         gt = float(inv["grand_total"])
@@ -715,6 +714,111 @@ async def update_payment(inv_id: str, patch: PaymentUpdate):
     return result
 
 
+class PaymentEntryIn(BaseModel):
+    date: str
+    amount: float
+    method: Literal["Cash", "UPI", "Bank", "Cheque", "Card", "Other"] = "Bank"
+    reference: str = ""   # cheque number or UTR
+    remarks: str = ""
+
+
+async def _recompute_invoice_payment(inv_id: str):
+    """Sum all payment entries, update invoice paid_amount + status."""
+    inv = await _db().invoices.find_one({"id": inv_id}, {"_id": 0})
+    if not inv: return
+    total_paid = 0.0
+    async for p in _db().billing_payments.find({"invoice_id": inv_id}, {"_id": 0}):
+        total_paid += float(p.get("amount", 0) or 0)
+    gt = float(inv["grand_total"])
+    if total_paid <= 0: status = "Unpaid"
+    elif total_paid >= gt - 0.5: status = "Paid"
+    else: status = "Partly Paid"
+    await _db().invoices.update_one(
+        {"id": inv_id},
+        {"$set": {"paid_amount": round(total_paid, 2), "payment_status": status}},
+    )
+
+
+@billing_router.post("/invoices/{inv_id}/payments")
+async def add_payment(inv_id: str, payload: PaymentEntryIn):
+    inv = await _db().invoices.find_one({"id": inv_id}, {"_id": 0})
+    if not inv: raise HTTPException(404, "Not found")
+    doc = {
+        "id": _uuid(), "invoice_id": inv_id, "invoice_no": inv["invoice_no"],
+        "customer": inv.get("customer", ""),
+        "date": payload.date, "amount": round(float(payload.amount), 2),
+        "method": payload.method, "reference": (payload.reference or "")[:60],
+        "remarks": (payload.remarks or "")[:300],
+        "created_at": _now(),
+    }
+    await _db().billing_payments.insert_one(doc)
+    await _recompute_invoice_payment(inv_id)
+    await audit("payment_add", "invoice", inv_id,
+                f"{inv['invoice_no']} · ₹{doc['amount']} via {doc['method']}{' · ' + doc['reference'] if doc['reference'] else ''}")
+    doc.pop("_id", None)
+    return doc
+
+
+@billing_router.get("/invoices/{inv_id}/payments")
+async def list_payments(inv_id: str):
+    docs = await _db().billing_payments.find({"invoice_id": inv_id}, {"_id": 0}).sort("date", -1).to_list(500)
+    return {"items": docs}
+
+
+@billing_router.delete("/payments/{pid}")
+async def delete_payment(pid: str):
+    doc = await _db().billing_payments.find_one({"id": pid}, {"_id": 0})
+    if not doc: raise HTTPException(404, "Not found")
+    await _db().billing_payments.delete_one({"id": pid})
+    await _recompute_invoice_payment(doc["invoice_id"])
+    await audit("payment_delete", "invoice", doc["invoice_id"], f"Removed ₹{doc['amount']} · {doc.get('reference', '')}")
+    return {"deleted": True}
+
+
+@billing_router.get("/statement")
+async def statement(customer: str, start: Optional[str] = None, end: Optional[str] = None):
+    """Customer statement: all invoices + payments in range, opening & closing balance."""
+    inv_q: Dict[str, Any] = {"customer": {"$regex": f"^{re.escape(customer)}$", "$options": "i"}}
+    date_q = {}
+    if start: date_q["$gte"] = start
+    if end: date_q["$lte"] = end
+    if date_q: inv_q["date"] = date_q
+    invoices = await _db().invoices.find(inv_q, {"_id": 0}).sort("date", 1).to_list(5000)
+
+    # Opening balance = billed before 'start' minus payments before 'start' for this customer
+    opening = 0.0
+    if start:
+        prev_inv = await _db().invoices.find({"customer": inv_q["customer"], "date": {"$lt": start}}, {"_id": 0}).to_list(5000)
+        opening = sum(i["grand_total"] for i in prev_inv)
+        prev_pay = await _db().billing_payments.find(
+            {"customer": inv_q["customer"], "date": {"$lt": start}}, {"_id": 0}).to_list(10000)
+        opening -= sum(p["amount"] for p in prev_pay)
+
+    inv_ids = [i["id"] for i in invoices]
+    payments = []
+    if inv_ids:
+        pq: Dict[str, Any] = {"invoice_id": {"$in": inv_ids}}
+        if date_q: pq["date"] = date_q
+        payments = await _db().billing_payments.find(pq, {"_id": 0}).sort("date", 1).to_list(10000)
+
+    total_billed = sum(i["grand_total"] for i in invoices)
+    total_paid = sum(p["amount"] for p in payments)
+    closing = opening + total_billed - total_paid
+    return {
+        "customer": customer,
+        "start": start, "end": end,
+        "opening_balance": round(opening, 2),
+        "total_billed": round(total_billed, 2),
+        "total_paid": round(total_paid, 2),
+        "closing_balance": round(closing, 2),
+        "invoices": invoices,
+        "payments": payments,
+    }
+
+
+# ============================================================
+# DASHBOARD & COMPANY
+# ============================================================
 @billing_router.get("/dashboard/summary")
 async def billing_dashboard():
     """Outstanding + monthly billed + counts by status for a dashboard tile."""
