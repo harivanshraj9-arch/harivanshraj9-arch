@@ -1009,6 +1009,11 @@ from hrms import hrms_router, init_hrms
 init_hrms(db)
 app.include_router(hrms_router)
 
+# Vendor Billing module (Rate Master + WCC AI + Invoice generator)
+from billing import billing_router, init_billing, seed_rates_if_empty
+init_billing(db)
+app.include_router(billing_router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -1024,6 +1029,7 @@ logger = logging.getLogger(__name__)
 @app.on_event("startup")
 async def on_startup():
     await seed_resources_if_empty()
+    await seed_rates_if_empty()
     # Ensure indexes
     await db.expenses.create_index([("date", -1)])
     await db.expenses.create_index([("category", 1)])

@@ -123,3 +123,16 @@ Create a professional dashboard for the MVVNL/POLARIS electrical utility project
 - Employee matching: Emp Code → Name (case-insensitive) → auto-create minimal employee (default option). Missing gross/net/total_deductions are auto-derived from the other numbers.
 - Duplicate detection: by `(employee_id, month)`; user can choose overwrite (default) or skip.
 - Verified end-to-end with a sample sheet: 4 rows, 3 matched (2 by code + 1 by name) + 1 new employee auto-created, correct gross/PF/ESIC/net inr amounts imported. UI dialog with color-coded rows (green=matched, yellow=new, blue=duplicate, red=invalid), summary chips, and result step. Reports and dashboard aggregates immediately reflect the imported months.
+
+## Update — 2026-02-04 · Vendor Billing (Rate Master + WCC AI + Invoice) — Phase 1
+
+- New **Vendor Billing** module at `/billing` with 4 tabs: Rate Master · New Invoice (WCC) · Invoices · Audit Log.
+- **Rate Master** seeded with all 12 R K Enterprises rates (DT Meter ₹1100, Consumer Survey ₹25, 1-PH Cable ₹140, etc.). Full CRUD + activate/deactivate + Excel import/export + rate history + audit logging on every change.
+- **WCC AI parsing** (`POST /api/billing/wcc/parse`) uses pdfplumber table extraction to find the "Billable Quantity" column and rapidfuzz WRatio for product name matching. Tested with your 3 uploaded WCC PDFs:
+  - MI: 5 items matched (1-PH Consumer 50, 3-PH Consumer 4, 1-PH NSC 293, 3-PH NSC 3, DT Meter 81)
+  - CI: 2 items matched (Consumer Survey 11,518, DT Survey 2)
+  - Cable: 1 item matched (1 PH Cable Installation 113)
+- **Invoice Generation**: auto invoice number (RKE/YYYY-MM/0001), CGST+SGST or IGST, round-off, editable lines. **Rates are snapshotted** on the invoice so future rate edits never affect past invoices.
+- **New product prompt**: if AI finds an unknown product, a popup lets you set the rate; it's saved to Rate Master and reused forever.
+- **Exports**: Rate Master (Excel), each invoice (Excel), printable PDF (browser print).
+- Sidebar entry "Vendor Billing" added under Modules; existing HRMS, Daily Expenses and Overview untouched.
