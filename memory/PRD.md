@@ -275,3 +275,28 @@ Frontend guard `AdminRoute` — redirects to `/admin/login` if no token, and adm
 - **RBAC gating on existing modules** — currently Daily Expenses / HRMS / Billing / DISCOM remain publicly accessible. Wire the `require_role` dependency into their endpoints when RBAC is turned on.
 - **2FA** — foundation in place (users have profile fields); add TOTP later.
 - **Forgot Password email** — endpoint pattern exists in playbook; hook up SMTP later.
+
+## Update — 2026-02-05 · Phase 1: Mobile Responsive
+
+### What changed
+- **New `MobileBottomNav`** (`/app/frontend/src/components/MobileBottomNav.jsx`) — 5-tab bottom navigation (Home/Expenses/HRMS/Billing/DISCOM) shown only on `<lg` (< 1024px). Uses `lucide-react` icons, active-state highlight, `env(safe-area-inset-bottom)` padding for iOS.
+- **Wired into all public pages** — DashboardPage, ExpensesPage, HrmsLayout, BillingPage, DiscomPage. Admin panel keeps its own layout (no bottom nav there).
+- **Table → mobile cards** on
+  - HRMS Employees (Edit / Delete cards with avatar, code, dept, salary, status)
+  - HRMS Attendance (status dropdown + In/Out time pickers + remarks)
+  - Billing Rate Master (Rate / GST / Edit / Toggle / Del)
+  - Billing Invoice list (customer / invoice # / totals / pay-status pill / View / Excel / Print)
+  - Expenses table already had mobile cards from Phase 1 initial build
+- **Viewport meta** upgraded (`viewport-fit=cover`, `theme-color`, apple-mobile-web-app-capable) — ready for PWA / Capacitor wrap in Phase 2.
+- **Global CSS**: `body { overflow-x: hidden }`, bottom padding calc(76px + safe-area) under 1024px so bottom nav never overlaps content.
+- All existing desktop sidebar + top-bar preserved. Auth, HRMS backend, Billing, DISCOM ingestion — everything untouched.
+
+### Testing (iteration_8.json)
+- ~95% frontend pass. Bottom nav, card layouts, admin flow all confirmed.
+- Only remaining: 4-12px overflow at 320px on /expenses & /discom (LOW priority, not user-visible due to body overflow-x hidden). 375px+ (all modern phones) is clean.
+
+### Pending / Next
+- **Phase 2** — Android app: wrap PWA using Capacitor, add app icon + splash + APK/AAB build instructions.
+- **RBAC gating** on Expenses / HRMS / Billing / DISCOM endpoints (currently public — auth exists but not enforced on business modules).
+- Consider making bottom-nav a Layout wrapper instead of inlined per page.
+- 320px overflow polish (optional).
