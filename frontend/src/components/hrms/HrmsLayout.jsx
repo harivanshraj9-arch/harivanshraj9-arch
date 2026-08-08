@@ -4,6 +4,7 @@ import { Menu, X, Zap, Users, Calendar, Umbrella,
 import { useState } from "react";
 import { Toaster } from "sonner";
 import Sidebar from "@/components/Sidebar";
+import MobileBottomNav from "@/components/MobileBottomNav";
 import { useTheme } from "@/lib/theme";
 
 const TABS = [
@@ -95,6 +96,8 @@ export default function HrmsLayout({ children, title = "HRMS & Payroll", subtitl
           </footer>
         </div>
       </main>
+
+      <MobileBottomNav />
 
       <Toaster position="top-right" theme={theme}
         toastOptions={{

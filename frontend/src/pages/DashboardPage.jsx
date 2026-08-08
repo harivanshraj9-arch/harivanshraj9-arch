@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { Menu, X, Zap, Wallet, ArrowRight } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import Sidebar from "@/components/Sidebar";
+import MobileBottomNav from "@/components/MobileBottomNav";
 import Hero from "@/components/Hero";
 import KpiGrid from "@/components/KpiGrid";
 import ResourceCard from "@/components/ResourceCard";
@@ -290,6 +291,8 @@ export default function DashboardPage() {
           </footer>
         </div>
       </main>
+
+      <MobileBottomNav />
 
       <Toaster
         position="top-right"

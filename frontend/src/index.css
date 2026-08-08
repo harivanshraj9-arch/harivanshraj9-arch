@@ -25,6 +25,21 @@ body {
     -moz-osx-font-smoothing: grayscale;
     background: hsl(var(--background));
     color: hsl(var(--foreground));
+    overflow-x: hidden;
+}
+
+/* Extra padding at the bottom of every main content area so the mobile
+   bottom nav does not cover the last row / footer. Reset on lg+. */
+@media (max-width: 1023.98px) {
+  main > div:last-child,
+  main .py-6 {
+    padding-bottom: calc(76px + env(safe-area-inset-bottom));
+  }
+}
+
+/* Touch-friendly minimum height on all clickable controls under 40px on mobile */
+@media (hover: none) and (pointer: coarse) {
+  button, [role="button"], a { touch-action: manipulation; }
 }
 
 h1, h2, h3, h4, h5, h6 {

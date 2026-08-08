@@ -96,8 +96,8 @@ export default function EmployeesPage() {
         </div>
       </div>
 
-      {/* Table */}
-      <div className="rounded-2xl border border-border bg-card overflow-hidden">
+      {/* Table (desktop) */}
+      <div className="rounded-2xl border border-border bg-card overflow-hidden hidden md:block">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-muted/50 border-b border-border">
@@ -156,6 +156,56 @@ export default function EmployeesPage() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Mobile cards */}
+      <div className="md:hidden space-y-2">
+        {rows.length === 0 && (
+          <div className="rounded-2xl border border-border bg-card p-6 text-center text-sm text-muted-foreground">
+            {loading ? "Loading…" : "No employees. Tap 'Add Employee' to start."}
+          </div>
+        )}
+        {rows.map((e) => {
+          const salary = (e.basic || 0) + (e.hra || 0) + (e.da || 0) + (e.conveyance || 0) + (e.special_allowance || 0);
+          return (
+            <div key={e.id} data-testid={`emp-card-${e.emp_code}`}
+              className="rounded-2xl border border-border bg-card p-3">
+              <div className="flex items-start gap-3">
+                <Avatar photo={e.photo} name={e.name} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-semibold truncate">{e.name}</div>
+                    <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap
+                      ${e.status === "Active" ? "bg-emerald-500/10 text-emerald-500" : "bg-muted text-muted-foreground"}`}>
+                      {e.status}
+                    </span>
+                  </div>
+                  <div className="text-[11px] font-mono text-muted-foreground">{e.emp_code}</div>
+                  <div className="mt-1 grid grid-cols-2 gap-1 text-xs">
+                    <div><span className="text-muted-foreground">Dept:</span> <span className="font-medium">{e.department || "—"}</span></div>
+                    <div><span className="text-muted-foreground">Role:</span> <span className="font-medium">{e.designation || "—"}</span></div>
+                    <div><span className="text-muted-foreground">Salary:</span> <span className="font-bold tabular-nums">{inr(salary)}</span></div>
+                    <div><span className="text-muted-foreground">Joining:</span> <span className="font-medium">{e.joining_date || "—"}</span></div>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 flex gap-2">
+                <button onClick={() => setDetail(e)}
+                  className="flex-1 h-9 rounded-lg border border-border text-xs font-semibold inline-flex items-center justify-center gap-1">
+                  <Pencil className="w-3 h-3"/> Edit
+                </button>
+                <button onClick={async () => {
+                    if (!window.confirm(`Delete ${e.name}?`)) return;
+                    try { await hrmsApi.deleteEmployee(e.id); toast.success("Deleted"); load(); }
+                    catch { toast.error("Delete failed"); }
+                  }}
+                  className="flex-1 h-9 rounded-lg border border-border text-xs font-semibold hover:bg-[hsl(var(--destructive))]/10 hover:text-[hsl(var(--destructive))] inline-flex items-center justify-center gap-1">
+                  <Trash2 className="w-3 h-3"/> Delete
+                </button>
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {detail && (

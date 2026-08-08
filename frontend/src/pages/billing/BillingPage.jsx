@@ -4,6 +4,7 @@ import { Menu, X, Zap, Plus, Pencil, Trash2, Search, Download, Upload,
   Power, Save, FileText, History, ClipboardList, Sparkles, ScrollText, Printer, Loader2 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import Sidebar from "@/components/Sidebar";
+import MobileBottomNav from "@/components/MobileBottomNav";
 import { useTheme } from "@/lib/theme";
 import { billingApi } from "@/lib/billingApi";
 import { inr } from "@/lib/format";
@@ -74,6 +75,7 @@ export default function BillingPage() {
           <footer className="pt-6 pb-10 border-t border-border text-xs text-muted-foreground">© 2026 Prathvi Power Solutions · Vendor Billing</footer>
         </div>
       </main>
+      <MobileBottomNav />
       <Toaster position="top-right" theme={theme}
         toastOptions={{ style: { background: "hsl(var(--card))", color: "hsl(var(--foreground))", border: "1px solid hsl(var(--border))" }}} />
     </div>
@@ -137,7 +139,7 @@ function RateMaster() {
         <input ref={fileRef} type="file" accept=".xlsx" onChange={importExcel} className="hidden" />
       </div>
 
-      <div className="rounded-2xl border border-border bg-card overflow-hidden">
+      <div className="rounded-2xl border border-border bg-card overflow-hidden hidden md:block">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-muted/50 border-b border-border">
@@ -171,6 +173,32 @@ function RateMaster() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Mobile rate cards */}
+      <div className="md:hidden space-y-2">
+        {rows.length === 0 && <div className="rounded-2xl border border-border bg-card p-6 text-center text-sm text-muted-foreground">No rates found</div>}
+        {rows.map(r => (
+          <div key={r.id} className="rounded-2xl border border-border bg-card p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold truncate">{r.name}</div>
+                <div className="text-[11px] text-muted-foreground">{r.category} · Unit {r.unit} · HSN {r.hsn || "—"}</div>
+              </div>
+              <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${r.active ? "bg-emerald-500/10 text-emerald-500" : "bg-muted text-muted-foreground"}`}>{r.active ? "Active" : "Inactive"}</span>
+            </div>
+            <div className="mt-2 flex items-center justify-between text-sm">
+              <div><span className="text-muted-foreground text-xs">Rate</span> <span className="font-bold tabular-nums">{inr(r.rate)}</span></div>
+              <div><span className="text-muted-foreground text-xs">GST</span> <span className="font-semibold">{r.gst_pct}%</span></div>
+            </div>
+            <div className="mt-2 flex gap-1">
+              <button onClick={() => setDialog(r)} className="flex-1 h-9 rounded-lg border border-border text-xs inline-flex items-center justify-center gap-1"><Pencil className="w-3 h-3"/>Edit</button>
+              <button onClick={async () => { await billingApi.toggleRate(r.id); load(); }} className="flex-1 h-9 rounded-lg border border-border text-xs inline-flex items-center justify-center gap-1"><Power className="w-3 h-3"/>Toggle</button>
+              <button onClick={async () => { if (window.confirm(`Delete '${r.name}'?`)) { await billingApi.deleteRate(r.id); load(); toast.success("Deleted"); } }}
+                className="flex-1 h-9 rounded-lg border border-border text-xs hover:bg-[hsl(var(--destructive))]/10 hover:text-[hsl(var(--destructive))] inline-flex items-center justify-center gap-1"><Trash2 className="w-3 h-3"/>Del</button>
+            </div>
+          </div>
+        ))}
       </div>
 
       {dialog && <RateDialog rate={dialog} categories={cats} onClose={() => setDialog(null)} onSaved={() => { setDialog(null); load(); }} />}
@@ -469,7 +497,7 @@ function InvoiceList() {
         </div>
       )}
 
-      <div className="rounded-2xl border border-border bg-card overflow-hidden">
+      <div className="rounded-2xl border border-border bg-card overflow-hidden hidden md:block">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 border-b border-border"><tr><Th>Invoice</Th><Th>Date</Th><Th>Customer</Th><Th className="text-right">Grand Total</Th><Th className="text-right">Paid</Th><Th>Status</Th><Th></Th></tr></thead>
           <tbody>
@@ -503,6 +531,42 @@ function InvoiceList() {
             })}
           </tbody>
         </table>
+      </div>
+
+      {/* Mobile invoice cards */}
+      <div className="md:hidden space-y-2">
+        {rows.length === 0 && <div className="rounded-2xl border border-border bg-card p-6 text-center text-sm text-muted-foreground">No invoices yet</div>}
+        {rows.map(r => {
+          const outstanding = r.grand_total - (r.paid_amount || 0);
+          return (
+            <div key={r.id} className="rounded-2xl border border-border bg-card p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="font-mono text-xs text-muted-foreground">{r.invoice_no}</div>
+                  <div className="font-semibold truncate">{r.customer || "—"}</div>
+                  <div className="text-[11px] text-muted-foreground">{r.date}</div>
+                </div>
+                <button data-testid={`pay-status-${r.id}`} onClick={() => setPayDialog(r)}
+                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${PAYMENT_STYLES[r.payment_status] || "bg-muted"}`}>
+                  {r.payment_status || "Unpaid"}
+                </button>
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-1 text-xs">
+                <div><span className="text-muted-foreground">Total</span> <div className="font-bold tabular-nums">{inr(r.grand_total)}</div></div>
+                <div className="text-right">
+                  <span className="text-muted-foreground">Paid</span>
+                  <div className="tabular-nums">{inr(r.paid_amount || 0)}</div>
+                  {outstanding > 0.5 && <div className="text-[10px] text-[hsl(var(--energy))]">Due {inr(outstanding)}</div>}
+                </div>
+              </div>
+              <div className="mt-2 grid grid-cols-3 gap-1">
+                <button onClick={() => setSelected(r)} className="h-8 rounded-lg border border-border text-xs">View</button>
+                <a href={billingApi.invoiceExcelUrl(r.id)} target="_blank" rel="noopener noreferrer" className="h-8 rounded-lg border border-border text-xs inline-flex items-center justify-center">Excel</a>
+                <button onClick={() => printInvoice(r, company)} className="h-8 rounded-lg border border-border text-xs">Print</button>
+              </div>
+            </div>
+          );
+        })}
       </div>
       {selected && <InvoiceView inv={selected} company={company} onClose={() => setSelected(null)} />}
       {payDialog && <PayDialog invoice={payDialog} onClose={() => setPayDialog(null)} onSaved={() => { setPayDialog(null); load(); }} />}

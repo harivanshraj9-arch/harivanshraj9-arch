@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import { Menu, X, Zap, Wallet, TrendingUp } from "lucide-react";
 import { Toaster } from "sonner";
 import Sidebar from "@/components/Sidebar";
+import MobileBottomNav from "@/components/MobileBottomNav";
 import ExpenseSummaryCards from "@/components/expenses/ExpenseSummaryCards";
 import ExpenseForm from "@/components/expenses/ExpenseForm";
 import ExpenseTable from "@/components/expenses/ExpenseTable";
@@ -219,6 +220,8 @@ export default function ExpensesPage() {
           </footer>
         </div>
       </main>
+
+      <MobileBottomNav />
 
       <Toaster
         position="top-right"

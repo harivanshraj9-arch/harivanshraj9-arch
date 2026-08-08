@@ -151,7 +151,7 @@ export default function AttendancePage() {
             </button>
           </div>
 
-          <div className="rounded-2xl border border-border bg-card overflow-hidden">
+          <div className="rounded-2xl border border-border bg-card overflow-hidden hidden md:block">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted/50 border-b border-border">
@@ -197,6 +197,44 @@ export default function AttendancePage() {
                 </tbody>
               </table>
             </div>
+          </div>
+
+          {/* Mobile attendance cards */}
+          <div className="md:hidden space-y-2">
+            {loading && <div className="rounded-2xl border border-border bg-card p-6 text-center text-sm text-muted-foreground">Loading…</div>}
+            {!loading && employees.length === 0 && <div className="rounded-2xl border border-border bg-card p-6 text-center text-sm text-muted-foreground">Add employees first.</div>}
+            {employees.map(e => {
+              const r = dailyRows[e.id] || {};
+              return (
+                <div key={e.id} className="rounded-2xl border border-border bg-card p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold truncate">{e.name}</div>
+                      <div className="text-[11px] font-mono text-muted-foreground">{e.emp_code} · {e.department}</div>
+                    </div>
+                    <select data-testid={`att-status-${e.emp_code}`} value={r.status || "Present"} onChange={ev => setRow(e.id, { status: ev.target.value })}
+                      className={`text-xs font-bold px-2 py-1 rounded-full border-0 focus:outline-none ${STATUS_STYLES[r.status] || "bg-muted"}`}>
+                      {(lookups?.attendance_statuses || []).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <label className="block text-[10px] text-muted-foreground font-bold">In</label>
+                      <input type="time" value={r.check_in || ""} onChange={ev => setRow(e.id, { check_in: ev.target.value })}
+                        className="mt-0.5 w-full h-9 px-2 rounded-md bg-background border border-border" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-muted-foreground font-bold">Out</label>
+                      <input type="time" value={r.check_out || ""} onChange={ev => setRow(e.id, { check_out: ev.target.value })}
+                        className="mt-0.5 w-full h-9 px-2 rounded-md bg-background border border-border" />
+                    </div>
+                  </div>
+                  <input value={r.remarks || ""} onChange={ev => setRow(e.id, { remarks: ev.target.value })}
+                    placeholder="Remarks (optional)"
+                    className="mt-2 w-full h-9 px-3 rounded-md bg-background border border-border text-xs" />
+                </div>
+              );
+            })}
           </div>
         </>
       )}

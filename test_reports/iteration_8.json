@@ -1,0 +1,42 @@
+{
+  "summary": "Frontend mobile-responsive testing (Phase 1). Verified mobile bottom nav, per-route rendering, mobile card layouts and admin flow. All primary acceptance criteria satisfied at 390x844. Minor horizontal overflow found only at 320px on /expenses and /discom.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ExpensesPage", "issue": "Minor horizontal overflow (~12px) at 320px viewport (iPhone SE). sw=332, cw=320. OK at 375+.", "selector": "html", "priority": "LOW"},
+      {"component": "DiscomPage", "issue": "Minor horizontal overflow (~4px) at 320px viewport. sw=324, cw=320. OK at 375+.", "selector": "html", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_features": [
+    "Mobile bottom nav (data-testid=mobile-bottom-nav) visible on /, /expenses, /hrms, /billing, /discom @ 390px with all 5 items (bnav-home, bnav-expenses, bnav-hrms, bnav-billing, bnav-discom).",
+    "Bnav hidden on /admin/login and /admin (post-login) — no duplication.",
+    "Bnav hidden at 1920x900 desktop across all public routes.",
+    "Active-state highlighting: bnav-expenses gets text-foreground+active class when on /expenses.",
+    "Tap navigation: clicking bnav-expenses from / correctly navigates to /expenses.",
+    "No horizontal overflow at 375/390/414/768 on all 10 tested routes.",
+    "HRMS Employees mobile: 8 emp-card-<code> rendered (EMP-0001..EMP-0008); desktop table hidden.",
+    "HRMS Attendance daily mobile: 16 att-status-<code> selects rendered inside mobile cards; desktop table (hidden md:block) not rendered.",
+    "Billing Rate Master mobile: rate cards render (12 rate-row-<id> in mobile block); desktop table hidden.",
+    "Billing Invoice list mobile card block present (0 invoices in system so no pay-status buttons to assert — verified table hidden).",
+    "Admin login flow: harivanshraj9@gmail.com / Prathvi@Admin2026 → /admin dashboard loads with 19 resources, 740,217 consumers, 8 employees, bnav hidden.",
+    "index.css bottom padding rule (calc(76px + safe-area) < 1024px) prevents nav overlap."
+  ],
+  "test_report_links": ["/app/test_reports/iteration_8.json"],
+  "action_items": [
+    "OPTIONAL/LOW: Fix 320px horizontal overflow on /expenses (~12px) and /discom (~4px). Likely a non-responsive wide element inside those pages. Not blocking since 375+ (smallest common modern phone) is clean."
+  ],
+  "critical_code_review_comments": [
+    "MobileBottomNav uses lg:hidden and NavLink correctly.",
+    "Bottom padding via index.css targets 'main > div:last-child, main .py-6' which is a brittle selector — a cleaner approach would be a utility class (e.g., pb-bottom-nav) applied by page shells. Works today but may miss layouts that don't use those class names.",
+    "Billing invoice list mobile cards could not be fully verified (no invoices in DB). Confirm with seeded invoices in a follow-up."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "~95% (2 minor overflow at 320px, all other criteria pass)"},
+  "test_credentials": "harivanshraj9@gmail.com / Prathvi@Admin2026 (verified working)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Only unresolved item is minor overflow at 320px on /expenses and /discom. All mobile card layouts (emp-card, att-status inside mobile block, rate-row inside md:hidden) confirmed. Billing invoice mobile cards untested due to empty invoices — seed an invoice to fully cover."
+}

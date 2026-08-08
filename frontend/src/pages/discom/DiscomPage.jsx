@@ -3,6 +3,7 @@ import { Menu, X, Zap, Database, Search, Download, ExternalLink,
   RefreshCw, Trash2, Loader2, Upload, Link as LinkIcon, ChevronLeft, ChevronRight } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import Sidebar from "@/components/Sidebar";
+import MobileBottomNav from "@/components/MobileBottomNav";
 import { useTheme } from "@/lib/theme";
 import { discomApi, DISCOM_ARTIFACT_URLS, CONSUMER_INQUIRY_URL } from "@/lib/discomApi";
 import { inr } from "@/lib/format";
@@ -76,6 +77,8 @@ export default function DiscomPage() {
           </footer>
         </div>
       </main>
+
+      <MobileBottomNav />
 
       <Toaster position="top-right" theme={theme}
         toastOptions={{ style: { background: "hsl(var(--card))", color: "hsl(var(--foreground))", border: "1px solid hsl(var(--border))" } }} />
