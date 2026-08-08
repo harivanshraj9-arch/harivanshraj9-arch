@@ -359,3 +359,39 @@ Frontend guard `AdminRoute` — redirects to `/admin/login` if no token, and adm
 
 ### Files touched
 - `/app/frontend/src/components/QuickExpenseFAB.jsx` — added photo state, camera + gallery inputs, preview, `compressImage` helper (canvas-based, no deps)
+
+## Update — 2026-02-05 · Play Store Publish Prep
+
+### Code-side (fully automated on repo)
+- **Release signing** wired into `frontend/android/app/build.gradle` — reads `frontend/android/key.properties` (git-ignored). No signing = no config applied → dev builds still work.
+- **ProGuard/R8** enabled: `minifyEnabled true`, `shrinkResources true`, plus custom rules that keep Capacitor bridge classes + WebView bindings intact.
+- **App version**: `versionCode 1`, `versionName "1.0.0"`. Target SDK 35 (Google requirement met).
+- **Privacy policy** at `/privacy` route (React page reading `/privacy.md`) — public URL: `https://prathvipowersolutions.com/privacy`.
+
+### Play Store assets (`/app/frontend/resources/play-store/`)
+- `icon-512.png` — 512×512 store icon
+- `feature-1024x500.png` — feature graphic with branded wordmark + module chips
+- `01-dashboard.png`, `02-hrms.png`, `03-billing.png`, `04-discom.png`, `05-admin.png` — five 1080×1920 phone screenshots
+
+### Deliverables
+- **`/app/PLAY_STORE_PUBLISH.md`** — 12KB step-by-step runbook covering: prerequisites, keystore, signed build, Play Console listing (with paste-ready descriptions), Data Safety form, review submission, and future release workflow.
+- **`/app/frontend/resources/make-keystore.sh`** — interactive one-command keystore generator that writes `key.properties` in place.
+- **`/app/frontend/resources/screenshots.py`** — headless Playwright script to regenerate Play Store screenshots after any UI change.
+- Updated `.gitignore` to exclude keystore + `key.properties` + Gradle build artifacts.
+
+### What the user must do (Play Console side)
+1. Create Google Play Developer account ($25 one-time) — runbook links.
+2. Run `bash frontend/resources/make-keystore.sh` once on local machine → produces `pps-release.keystore` + `key.properties`.
+3. Run `yarn build && npx cap sync android && cd android && ./gradlew bundleRelease` → produces `app-release.aab`.
+4. Fill Play Console listing using the paste-ready copy in the runbook.
+5. Upload assets from `resources/play-store/`.
+6. Submit — Google typically approves in 1–7 days.
+
+### Files touched
+- `frontend/android/app/build.gradle` (release signing + ProGuard)
+- `frontend/android/app/proguard-rules.pro` (Capacitor keep rules)
+- `frontend/public/privacy.md` (privacy policy content)
+- `frontend/src/pages/PrivacyPolicy.jsx` (public /privacy route)
+- `frontend/src/App.js` (mounted route)
+- `frontend/resources/play_feature.svg`, `resources/make-keystore.sh`, `resources/screenshots.py`
+- `/app/PLAY_STORE_PUBLISH.md` (master runbook)

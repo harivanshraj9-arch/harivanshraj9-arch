@@ -19,3 +19,21 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# ================ PPS Connect · Release rules ================
+# Keep Capacitor bridge classes (accessed via reflection from JS)
+-keep class com.getcapacitor.** { *; }
+-keep class com.capacitorjs.** { *; }
+-keep @com.getcapacitor.annotation.CapacitorPlugin class * { *; }
+-keepclassmembers @com.getcapacitor.annotation.CapacitorPlugin class * {
+    @com.getcapacitor.PluginMethod public *;
+}
+# Keep JS-Java bridge interface methods
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+# WebView + WebChromeClient
+-keep class android.webkit.** { *; }
+-keepclassmembers class * extends android.webkit.WebView { *; }
+# AndroidX splash
+-keep class androidx.core.splashscreen.** { *; }
