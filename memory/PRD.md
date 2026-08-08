@@ -347,3 +347,15 @@ Frontend guard `AdminRoute` — redirects to `/admin/login` if no token, and adm
 - Publish APK/AAB → Google Play Store (needs signed keystore + Play Console listing)
 - RBAC gating on Expenses/HRMS/Billing/DISCOM endpoints (auth exists but modules still public)
 - Optional: TOTP 2FA
+
+## Update — 2026-02-05 · Field Photo Attach on Quick FAB
+
+- Quick Expense FAB now includes an **optional Bill Photo** section with two buttons: **Snap Bill** (opens back camera on mobile via `capture="environment"`) and **Pick from Gallery**.
+- Selected image is compressed **client-side** on canvas: JPEG, max 1600px edge, iteratively lowered quality until under 2 MB. Transparent PNGs get a white background before compression.
+- Preview shown inline with filename + estimated KB + one-tap remove.
+- On save, attachment travels as `attachment` (base64 data URL) + `attachment_name` (filename) on the existing `POST /api/expenses` endpoint. No backend change required.
+- Works in the Capacitor Android WebView (standard file input; the OS invokes native camera / gallery pickers).
+- Verified E2E: uploaded a 4×4 PNG, was received as `tmpis38m6fg.jpg` in the expense document with the base64 body preserved.
+
+### Files touched
+- `/app/frontend/src/components/QuickExpenseFAB.jsx` — added photo state, camera + gallery inputs, preview, `compressImage` helper (canvas-based, no deps)
