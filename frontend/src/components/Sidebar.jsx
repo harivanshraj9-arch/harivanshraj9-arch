@@ -2,7 +2,7 @@ import { motion } from "framer-motion";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Zap, LayoutDashboard, Activity, Users, DollarSign,
-  Package, FileText, Scale, UserCheck, Sun, Moon, Wallet, Briefcase, Receipt,
+  Package, FileText, Scale, UserCheck, Sun, Moon, Wallet, Briefcase, Receipt, Database,
 } from "lucide-react";
 import { CATEGORY_META } from "@/lib/categoryMeta";
 
@@ -27,6 +27,7 @@ export default function Sidebar({
   const onExpenses = location.pathname === "/expenses" || activeRoute === "expenses";
   const onHrms = location.pathname.startsWith("/hrms") || activeRoute === "hrms";
   const onBilling = location.pathname === "/billing" || activeRoute === "billing";
+  const onDiscom = location.pathname.startsWith("/discom") || activeRoute === "discom";
 
   const handleCategoryClick = (key) => {
     if (onDashboard && onSelect) {
@@ -117,6 +118,19 @@ export default function Sidebar({
           <Receipt className="w-4 h-4 shrink-0" />
           <span className="flex-1 text-left">Vendor Billing</span>
           {onBilling && (
+            <motion.div layoutId="sidebar-active-dot" className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--energy))]" />
+          )}
+        </button>
+
+        <button
+          data-testid="nav-discom"
+          onClick={() => { navigate("/discom"); onClose?.(); }}
+          className={`w-full group flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all
+            ${onDiscom ? "bg-foreground text-background" : "text-foreground/70 hover:text-foreground hover:bg-muted"}`}
+        >
+          <Database className="w-4 h-4 shrink-0" />
+          <span className="flex-1 text-left">DISCOM</span>
+          {onDiscom && (
             <motion.div layoutId="sidebar-active-dot" className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--energy))]" />
           )}
         </button>

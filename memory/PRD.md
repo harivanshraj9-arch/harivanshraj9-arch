@@ -188,3 +188,37 @@ Create a professional dashboard for the MVVNL/POLARIS electrical utility project
 - P2: HRMS Shift Management, Advance & Loan (EMI recovery), Document Letters, Google Sheets sync.
 - Tech-debt: refactor BillingPage.jsx (>1100 lines) into feature components; split billing.py + hrms.py.
 - Fix React `useEffect` dep warnings in HRMS pages.
+
+## Update — 2026-02-05 · DISCOM Module (Master Data + Consumer Inquiry)
+
+### Scope
+- New sidebar entry **DISCOM** at `/discom` with two tabs: **Master Data** and **Consumer Inquiry**.
+- Handles UPPCL consumer master data for 4 divisions under EDC Sitapur: SITAPUR-I, SITAPUR-II, BISWAN-III, MAHMUDABAD-IV.
+
+### Master Data
+- 4 division tiles showing live consumer counts. Click a tile to activate its panel.
+- **Ingest** options per division:
+  - One-tap "Load from Emergent Asset URL" (pre-wired to the 4 uploaded `.gz` artifact URLs)
+  - Manual upload `.csv` / `.csv.gz`
+- **Streaming ingest**: backend fetches gzip via httpx, decompresses, csv-parses, batch-inserts 5000/rows at a time into `discom_consumers`. Wipes existing division rows on ingest (replace mode). Async background task with polling `/jobs/{id}`.
+- **Schema-agnostic**: preserves ALL 141 raw columns under `raw` sub-doc; lifts 27 high-value fields (KNO, SCNO, ACCT_ID, NAME, FATHER_NAME, MOBILE_NO, ADDRESS, LOAD, CON_STATUS, METER_BADGE_NO, SS_NAME, FEEDER_NAME, DT_NAME, BILLED_AMOUNT, TOTAL_OUTSTANDING, etc.) to top level with indexes for fast search.
+- **Search & filter**: full-text style search across KNO/SCNO/ACCT_ID/NAME/FATHER_NAME/MOBILE/METER/ADDRESS/VILLAGE, field-scope selector, connection-status + supply-type filters, paginated 25/page.
+- **Detail modal**: on "View" a full grouped record dialog (Identity / Consumer / Connection / Meter / Readings / Billing / Payment / Network) with all raw fields.
+- **Clear** button per division to wipe rows + meta.
+
+### Consumer Inquiry
+- Direct link + button that opens `https://consumer.uppcl.org/wss/pay_bill_home` in a new tab.
+- Embedded iframe preview (falls back gracefully if UPPCL blocks embedding).
+
+### Backend
+- New module `/app/backend/discom.py` (~350 lines) with router mounted in `server.py`.
+- Endpoints: `GET /divisions`, `POST /ingest/url`, `POST /ingest/upload`, `GET /jobs`, `GET /jobs/{id}`, `GET /consumers`, `GET /consumers/{id}`, `GET /stats`, `DELETE /division/{code}`.
+- Indexes on `(division, KNO)`, `(division, SCNO)`, `(division, NAME)`, `(division, MOBILE_NO)`, `(division, METER_BADGE_NO)`.
+
+### Verified E2E
+- All 4 divisions ingested from artifact URLs — total **740,217 consumers** (SITAPUR-I: 148,287 · SITAPUR-II: 234,635 · BISWAN-III: 206,451 · MAHMUDABAD-IV: 150,844).
+- Field-scoped NAME search "ANITA" → 303 matches; multi-field search → 338 matches.
+- Sidebar DISCOM entry active, tab switching, iframe preview, detail modal all working.
+
+### Note
+- Parallel ingest of multiple heavy gzips can stall the event loop under contention — recommend running one division at a time. Sequential ingest of all 4 completed in ~90 seconds total.

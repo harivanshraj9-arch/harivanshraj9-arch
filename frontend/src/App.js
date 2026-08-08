@@ -10,6 +10,7 @@ import PayrollPage from "@/pages/hrms/PayrollPage";
 import ReportsPage from "@/pages/hrms/ReportsPage";
 import SettingsPage from "@/pages/hrms/SettingsPage";
 import BillingPage from "@/pages/billing/BillingPage";
+import DiscomPage from "@/pages/discom/DiscomPage";
 
 function App() {
   return (
@@ -26,6 +27,7 @@ function App() {
           <Route path="/hrms/reports" element={<ReportsPage />} />
           <Route path="/hrms/settings" element={<SettingsPage />} />
           <Route path="/billing" element={<BillingPage />} />
+          <Route path="/discom" element={<DiscomPage />} />
         </Routes>
       </BrowserRouter>
     </div>

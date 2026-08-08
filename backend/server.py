@@ -1014,6 +1014,11 @@ from billing import billing_router, init_billing, seed_rates_if_empty
 init_billing(db)
 app.include_router(billing_router)
 
+# DISCOM Master Data module
+from discom import discom_router, init_discom, ensure_indexes as ensure_discom_indexes
+init_discom(db)
+app.include_router(discom_router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -1035,6 +1040,7 @@ async def on_startup():
     await db.expenses.create_index([("category", 1)])
     await db.expenses.create_index([("payment_mode", 1)])
     await db.budgets.create_index([("month", 1)], unique=True)
+    await ensure_discom_indexes(db)
 
 
 @app.on_event("shutdown")
