@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2732 2732">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0B1E3F"/>
+      <stop offset="100%" stop-color="#050B1A"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0EA5E9"/>
+      <stop offset="50%" stop-color="#22C55E"/>
+      <stop offset="100%" stop-color="#F97316"/>
+    </linearGradient>
+    <linearGradient id="bolt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#22C55E"/>
+      <stop offset="100%" stop-color="#0EA5E9"/>
+    </linearGradient>
+  </defs>
+  <rect width="2732" height="2732" fill="url(#bg)"/>
+
+  <g transform="translate(1366 1220)">
+    <circle cx="0" cy="0" r="290" fill="none" stroke="url(#ring)" stroke-width="18" opacity="0.9"/>
+    <g transform="translate(-160 -260) scale(0.62)">
+      <path d="M340 260 L340 780 L440 780 L440 590 L560 590
+               C650 590 720 520 720 430
+               C720 340 650 260 560 260 Z
+               M440 350 L560 350
+               C600 350 620 385 620 425
+               C620 465 600 500 560 500
+               L440 500 Z" fill="#F5F7FA"/>
+      <path d="M615 320 L470 545 L555 545 L510 720 L680 465 L590 465 Z"
+            fill="url(#bolt)" stroke="#0B1E3F" stroke-width="4"/>
+    </g>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="1366" y="1660" text-anchor="middle" fill="#F5F7FA"
+        font-family="Arial, sans-serif" font-weight="900" font-size="120" letter-spacing="12">
+    PRATHVI POWER SOLUTIONS
+  </text>
+  <text x="1366" y="1750" text-anchor="middle" fill="#94A3B8"
+        font-family="Arial, sans-serif" font-weight="700" font-size="60" letter-spacing="14">
+    RELIABLE POWER · SMARTER SOLUTIONS
+  </text>
+  <text x="1366" y="1870" text-anchor="middle" fill="#22C55E"
+        font-family="Arial, sans-serif" font-weight="700" font-size="52" letter-spacing="8">
+    PPS CONNECT
+  </text>
+</svg>

@@ -300,3 +300,50 @@ Frontend guard `AdminRoute` — redirects to `/admin/login` if no token, and adm
 - **RBAC gating** on Expenses / HRMS / Billing / DISCOM endpoints (currently public — auth exists but not enforced on business modules).
 - Consider making bottom-nav a Layout wrapper instead of inlined per page.
 - 320px overflow polish (optional).
+
+## Update — 2026-02-05 · Phase 2 & Extras: Android + Quick FAB + Forgot Password
+
+### Android App (Capacitor 7)
+- **App name**: PPS Connect
+- **Package id**: `com.prathvipower.ppsconnect`
+- Wraps the deployed website `https://prathvipowersolutions.com` inside a native WebView. Live-updates without APK rebuild.
+- Branded launcher icon (dark navy P + lightning bolt + green/orange gradient ring) generated at all mipmap sizes.
+- Splash screen with company wordmark generated at all portrait + landscape drawable sizes.
+- Hardware Android back-button support (in-app history back, exit on home).
+- Offline banner via `navigator.onLine` — works inside WebView.
+- Config file: `/app/frontend/capacitor.config.json`
+- Icon/splash sources: `/app/frontend/resources/icon.svg` + `splash.svg` + `generate.py`
+- **Build docs**: `/app/ANDROID_BUILD.md` — step-by-step for APK (debug) + AAB (Play Store) generation. Container has no Android SDK; user builds on Windows/Mac in ~5 min once SDK is installed.
+- New yarn scripts: `build:android`, `cap:sync`, `cap:open`
+
+### Quick Expense FAB
+- Global floating "+" button — visible on every public page except `/expenses` (which has its own form) and `/admin*`.
+- Mobile: 56×56 pill positioned above bottom nav. Desktop: label + icon at bottom-right.
+- Bottom-sheet dialog on mobile, centered modal on desktop.
+- 3-tap flow: amount → category chip → payment mode → save. Remembers last category + mode.
+- Uses existing `POST /api/expenses` endpoint. Toast confirmation.
+
+### Forgot Password Flow (no email delivery — option C)
+- `POST /api/auth/forgot-password` → creates one-time token (60 min TTL) in `password_reset_tokens` collection, logs the reset link to `audit_log` + server logs. Always returns 200 (does not leak email existence).
+- `POST /api/auth/reset-password-with-token` → validates token, hashes new password, marks token used.
+- Pages `/admin/forgot-password` and `/admin/reset-password?token=…` — branded, with show/hide password + confirm field.
+- "Forgot password?" link added to admin login.
+- Admin can see the reset link in `Admin → Activity Log` (search `action = password_reset_request`) and share with user.
+- Verified E2E: request → link generated in audit → reset with token → login with new password → restore.
+
+### Files added / changed (this iteration)
+- Backend: `auth.py` (+forgot/reset endpoints, +password_reset_tokens indexes)
+- Frontend components: `QuickExpenseFAB.jsx`, `OfflineBanner.jsx`
+- Frontend pages: `admin/ForgotPassword.jsx`, `admin/ResetPassword.jsx`
+- Frontend lib: `capacitor.js` (Capacitor init + hardware back button)
+- App.js: mount FAB + OfflineBanner globally, add /admin/forgot-password + /admin/reset-password routes
+- AdminLogin: added "Forgot password?" link
+- Frontend build: `capacitor.config.json`, `resources/icon.svg`, `resources/splash.svg`, `resources/generate.py`
+- Android folder: `/app/frontend/android/` (Capacitor + Gradle project)
+- Build guide: `/app/ANDROID_BUILD.md`
+
+### Pending / Next
+- Real email delivery for password reset (choose Resend / SMTP / SES when ready)
+- Publish APK/AAB → Google Play Store (needs signed keystore + Play Console listing)
+- RBAC gating on Expenses/HRMS/Billing/DISCOM endpoints (auth exists but modules still public)
+- Optional: TOTP 2FA

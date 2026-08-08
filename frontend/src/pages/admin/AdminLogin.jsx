@@ -109,8 +109,15 @@ export default function AdminLogin() {
               {busy ? "Signing in…" : "Sign In"}
             </button>
 
-            <div className="text-xs text-center text-muted-foreground pt-2">
-              Session expires after 12 hours of inactivity.
+            <div className="flex items-center justify-between pt-1">
+              <a
+                data-testid="forgot-link"
+                href="/admin/forgot-password"
+                className="text-xs text-muted-foreground hover:text-foreground font-semibold"
+              >
+                Forgot password?
+              </a>
+              <span className="text-[10px] text-muted-foreground">Session expires after 12 hours</span>
             </div>
           </form>
         </div>

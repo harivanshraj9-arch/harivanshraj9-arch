@@ -12,16 +12,22 @@ import SettingsPage from "@/pages/hrms/SettingsPage";
 import BillingPage from "@/pages/billing/BillingPage";
 import DiscomPage from "@/pages/discom/DiscomPage";
 import AdminLogin from "@/pages/admin/AdminLogin";
+import ForgotPassword from "@/pages/admin/ForgotPassword";
+import ResetPassword from "@/pages/admin/ResetPassword";
 import AdminDashboard from "@/pages/admin/AdminDashboard";
 import UsersPage from "@/pages/admin/UsersPage";
 import ResourcesPage from "@/pages/admin/ResourcesPage";
 import ActivityLogPage from "@/pages/admin/ActivityLogPage";
 import AdminRoute from "@/components/admin/AdminRoute";
+import QuickExpenseFAB from "@/components/QuickExpenseFAB";
+import OfflineBanner from "@/components/OfflineBanner";
 
 function App() {
   return (
     <div className="App">
       <BrowserRouter>
+        <OfflineBanner />
+        <QuickExpenseFAB />
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/expenses" element={<ExpensesPage />} />
@@ -35,6 +41,8 @@ function App() {
           <Route path="/billing" element={<BillingPage />} />
           <Route path="/discom" element={<DiscomPage />} />
           <Route path="/admin/login" element={<AdminLogin />} />
+          <Route path="/admin/forgot-password" element={<ForgotPassword />} />
+          <Route path="/admin/reset-password" element={<ResetPassword />} />
           <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
           <Route path="/admin/users" element={<AdminRoute><UsersPage /></AdminRoute>} />
           <Route path="/admin/resources" element={<AdminRoute><ResourcesPage /></AdminRoute>} />

@@ -125,6 +125,15 @@ class ResetPasswordPayload(BaseModel):
     new_password: str = Field(min_length=6, max_length=128)
 
 
+class ForgotPayload(BaseModel):
+    email: EmailStr
+
+
+class ResetTokenPayload(BaseModel):
+    token: str
+    new_password: str = Field(min_length=6, max_length=128)
+
+
 # ================================================================
 #                     HELPERS
 # ================================================================
@@ -327,6 +336,77 @@ async def change_password(payload: ChangePasswordPayload, request: Request,
     await _db.users.update_one({"id": user["id"]},
                                 {"$set": {"password_hash": new_hash, "password_changed_at": _now_iso()}})
     await _log_activity(user, "password_change", "auth", "", True, _client_ip(request))
+    return {"ok": True}
+
+
+# --------------- Forgot / Reset Password ---------------
+import secrets as _secrets
+RESET_TTL_MIN = 60
+
+
+@auth_router.post("/forgot-password")
+async def forgot_password(payload: ForgotPayload, request: Request):
+    """Always returns 200 (do not reveal whether email exists).
+    Creates a one-time reset token valid for 60 minutes.
+    Token + reset link are logged to the audit log so an admin can
+    share the link (no email service configured)."""
+    email = payload.email.lower().strip()
+    user = await _db.users.find_one({"email": email})
+    if user and user.get("status") == "active":
+        token = _secrets.token_urlsafe(32)
+        doc = {
+            "id": str(uuid.uuid4()),
+            "user_id": user["id"],
+            "user_email": email,
+            "token": token,
+            "used": False,
+            "created_at": _now_iso(),
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=RESET_TTL_MIN)).isoformat(),
+        }
+        await _db.password_reset_tokens.insert_one(doc)
+        # Build reset link using request origin (so the mobile/preview URL is correct)
+        origin = request.headers.get("origin") or request.headers.get("referer", "").rstrip("/") or ""
+        if origin.endswith("/"):
+            origin = origin[:-1]
+        reset_link = f"{origin}/admin/reset-password?token={token}"
+        # Log to audit + server log so admin can find & share
+        await _log_activity(
+            {"id": user["id"], "email": email},
+            "password_reset_request", "auth",
+            f"Reset link: {reset_link}",
+            True, _client_ip(request),
+        )
+        log.info(f"[FORGOT] Reset link for {email}: {reset_link}")
+    # Uniform response regardless of email existence
+    return {"ok": True, "message": "If the email exists, a reset link has been generated. Contact an admin if you don't receive it."}
+
+
+@auth_router.post("/reset-password-with-token")
+async def reset_password_with_token(payload: ResetTokenPayload, request: Request):
+    doc = await _db.password_reset_tokens.find_one({"token": payload.token})
+    if not doc:
+        raise HTTPException(400, "Invalid or expired reset link")
+    if doc.get("used"):
+        raise HTTPException(400, "This reset link has already been used")
+    if datetime.fromisoformat(doc["expires_at"]) < datetime.now(timezone.utc):
+        raise HTTPException(400, "This reset link has expired. Request a new one.")
+
+    user = await _db.users.find_one({"id": doc["user_id"]})
+    if not user:
+        raise HTTPException(400, "Account no longer exists")
+
+    await _db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"password_hash": _hash_password(payload.new_password),
+                  "password_changed_at": _now_iso()}}
+    )
+    await _db.password_reset_tokens.update_one(
+        {"token": payload.token}, {"$set": {"used": True, "used_at": _now_iso()}}
+    )
+    await _log_activity(
+        {"id": user["id"], "email": user["email"]},
+        "password_reset_success", "auth", "", True, _client_ip(request),
+    )
     return {"ok": True}
 
 
@@ -654,3 +734,5 @@ async def ensure_auth_indexes():
     await _db.audit_log.create_index([("timestamp", -1)])
     await _db.audit_log.create_index("user_email")
     await _db.login_attempts.create_index("identifier")
+    await _db.password_reset_tokens.create_index("token", unique=True)
+    await _db.password_reset_tokens.create_index("user_email")
