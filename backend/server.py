@@ -1019,6 +1019,13 @@ from discom import discom_router, init_discom, ensure_indexes as ensure_discom_i
 init_discom(db)
 app.include_router(discom_router)
 
+# Auth + Admin module (Phase 3)
+from auth import (auth_router, admin_router, init_auth,
+                   seed_super_admin, ensure_auth_indexes)
+init_auth(db)
+app.include_router(auth_router)
+app.include_router(admin_router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -1041,6 +1048,8 @@ async def on_startup():
     await db.expenses.create_index([("payment_mode", 1)])
     await db.budgets.create_index([("month", 1)], unique=True)
     await ensure_discom_indexes(db)
+    await ensure_auth_indexes()
+    await seed_super_admin()
 
 
 @app.on_event("shutdown")

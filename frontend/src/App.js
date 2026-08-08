@@ -11,6 +11,12 @@ import ReportsPage from "@/pages/hrms/ReportsPage";
 import SettingsPage from "@/pages/hrms/SettingsPage";
 import BillingPage from "@/pages/billing/BillingPage";
 import DiscomPage from "@/pages/discom/DiscomPage";
+import AdminLogin from "@/pages/admin/AdminLogin";
+import AdminDashboard from "@/pages/admin/AdminDashboard";
+import UsersPage from "@/pages/admin/UsersPage";
+import ResourcesPage from "@/pages/admin/ResourcesPage";
+import ActivityLogPage from "@/pages/admin/ActivityLogPage";
+import AdminRoute from "@/components/admin/AdminRoute";
 
 function App() {
   return (
@@ -28,6 +34,11 @@ function App() {
           <Route path="/hrms/settings" element={<SettingsPage />} />
           <Route path="/billing" element={<BillingPage />} />
           <Route path="/discom" element={<DiscomPage />} />
+          <Route path="/admin/login" element={<AdminLogin />} />
+          <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
+          <Route path="/admin/users" element={<AdminRoute><UsersPage /></AdminRoute>} />
+          <Route path="/admin/resources" element={<AdminRoute><ResourcesPage /></AdminRoute>} />
+          <Route path="/admin/activity" element={<AdminRoute><ActivityLogPage /></AdminRoute>} />
         </Routes>
       </BrowserRouter>
     </div>
