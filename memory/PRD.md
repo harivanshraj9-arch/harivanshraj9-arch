@@ -395,3 +395,24 @@ Frontend guard `AdminRoute` — redirects to `/admin/login` if no token, and adm
 - `frontend/src/App.js` (mounted route)
 - `frontend/resources/play_feature.svg`, `resources/make-keystore.sh`, `resources/screenshots.py`
 - `/app/PLAY_STORE_PUBLISH.md` (master runbook)
+
+## Update — 2026-02-05 · Direct Install (Sideload)
+
+### GitHub Actions workflow
+- `.github/workflows/android-build.yml` builds APK on GitHub-hosted runners — zero setup on user's laptop.
+- Two modes via `workflow_dispatch`:
+  - **debug** (default): builds unsigned debug APK, artifact `pps-connect-debug-apk`. Requires nothing.
+  - **release**: builds signed release APK, artifact `pps-connect-release-apk`. Requires 4 GitHub secrets: `RELEASE_KEYSTORE_BASE64`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD`.
+- Auto-triggers on push to `main` touching `frontend/**`. Yarn + Java 21 (Temurin) + `android-actions/setup-android@v3` for SDK.
+- Artifacts retained 90 days; downloadable via GitHub UI or phone browser.
+
+### `/app/DIRECT_INSTALL.md` — sideload guide
+- Path A (GitHub Actions, recommended): user pushes to GitHub → runs workflow → downloads APK on phone → taps to install. Total ~10 min.
+- Path B (local Android Studio): traditional route, same as `ANDROID_BUILD.md` §Build APK.
+- Signed release APK instructions for cleaner distribution to teammates over WhatsApp/Drive.
+- **Auto-update trick documented**: since the app is a WebView loading the live site, most updates ship instantly without an APK rebuild. Only native/config changes need a fresh APK.
+- Gotchas table for common install errors ("App not installed" signature mismatch, "unknown source" prompt, missing secrets).
+
+### Files added / changed
+- `.github/workflows/android-build.yml` — GitHub Actions build pipeline
+- `/app/DIRECT_INSTALL.md` — end-to-end sideload guide
