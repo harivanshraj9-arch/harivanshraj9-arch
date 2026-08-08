@@ -222,3 +222,56 @@ Create a professional dashboard for the MVVNL/POLARIS electrical utility project
 
 ### Note
 - Parallel ingest of multiple heavy gzips can stall the event loop under contention — recommend running one division at a time. Sequential ingest of all 4 completed in ~90 seconds total.
+
+## Update — 2026-02-05 · Phase 3: Auth + Admin Panel
+
+### Scope delivered (Phase 3)
+Master 3-phase upgrade split — this is Phase 3 (Auth + Admin). Mobile responsive (Phase 1) and Android app (Phase 2) will follow in dedicated sessions.
+
+### JWT Authentication
+- `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `POST /api/auth/refresh`, `POST /api/auth/change-password`
+- **PyJWT + bcrypt** — playbook-verified. Access token 12h, refresh 30d, httpOnly `SameSite=none` cookies + Bearer token in JSON response.
+- **Brute-force lockout**: 5 fails in 15 min = 15-min IP+email lockout. XFF handling fixed to take first client IP token.
+- **Super Admin seed** — idempotent from `ADMIN_EMAIL` / `ADMIN_PASSWORD` env; re-syncs hash if env password changes.
+
+### Admin Panel `/admin`
+Frontend guard `AdminRoute` — redirects to `/admin/login` if no token, and admin API `axios` interceptor auto-signs out on any 401.
+
+**Pages:**
+- **`/admin/login`** — email+password, show/hide password, error state, session-expiry note
+- **`/admin`** — KPI grid (Users active/inactive, Resources, Modules, DISCOM consumers, HRMS employees, Invoices), Users-by-Role pie chart, Recent Logins, Recent Activity
+- **`/admin/users`** — search/filter (role, status), Add/Edit/Delete/Reset-Password/Toggle-Status. Mobile-friendly cards on <md screens. Cannot delete self, cannot demote self, only super_admin can create super_admin.
+- **`/admin/resources`** — CRUD on existing `db.resources` (the 19 seeded Google Sheets/Docs links). Category filter pills, star, enable/disable, allowed_roles field.
+- **`/admin/activity`** — audit log with filter by user email / module / action / date range.
+
+**Backend `/api/admin/*` endpoints** — all require role `super_admin` or `admin`. Every mutation writes an entry into `audit_log`.
+
+### Roles
+`super_admin` (full) · `admin` (mgmt except demote/promote super) · `staff` (module access) · `viewer` (read-only). Roles are configurable per-user via `role` + optional `permissions[]` for future fine-grained checks.
+
+### DB additions
+- `users` (unique index on email) with fields `id, email, password_hash, name, role, status, mobile, employee_id, department, designation, permissions[], created_at, last_login`
+- `login_attempts` (identifier index) for brute-force
+- `audit_log` (timestamp desc index, user_email index)
+
+### Files added / changed
+- Backend: `/app/backend/auth.py` (new, 380 lines), `server.py` (+7 lines to include routers and startup seed), `backend/.env` (+ JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME)
+- Frontend: `lib/adminApi.js`, `components/admin/AdminRoute.jsx`, `components/admin/AdminLayout.jsx`, `pages/admin/AdminLogin.jsx`, `pages/admin/AdminDashboard.jsx`, `pages/admin/UsersPage.jsx`, `pages/admin/ResourcesPage.jsx`, `pages/admin/ActivityLogPage.jsx`, `App.js` (+5 routes)
+- `/app/memory/test_credentials.md` — super admin creds documented
+- Auth playbook applied verbatim; no cross-cutting changes to existing modules
+
+### Verified
+- **iteration_6.json** 25/26 pytest — brute-force lockout initially failed due to XFF issue
+- **iteration_7.json** 26/26 pytest ✅ — after XFF fix + collection name fix
+- Existing modules regression: `/api/resources` 19 rows, `/api/expenses` OK, `/api/hrms/*` OK, `/api/billing/*` OK, `/api/discom/divisions` returns 4 divisions with 740,217 consumers preserved
+- Frontend end-to-end: login → dashboard → users → resources → activity all render, testids intact
+
+### Credentials (see `/app/memory/test_credentials.md`)
+- **Super Admin**: `harivanshraj9@gmail.com` / `Prathvi@Admin2026`
+
+### Pending / Next
+- **Phase 1** — Mobile responsive: bottom nav, hamburger menu, all pages fluid 320px→1920px, tables→cards on mobile.
+- **Phase 2** — Android app via Capacitor: package identifier, splash, app icon, APK/AAB build instructions.
+- **RBAC gating on existing modules** — currently Daily Expenses / HRMS / Billing / DISCOM remain publicly accessible. Wire the `require_role` dependency into their endpoints when RBAC is turned on.
+- **2FA** — foundation in place (users have profile fields); add TOTP later.
+- **Forgot Password email** — endpoint pattern exists in playbook; hook up SMTP later.
