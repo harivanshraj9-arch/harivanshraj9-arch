@@ -1,0 +1,31 @@
+{
+  "summary": "Phase 3 Auth+Admin retest after fixes. All 26/26 pytest cases PASS in /app/backend/tests/test_auth_admin.py. Both previously-critical bugs are resolved: (1) Brute-force lockout now triggers correctly — 6th failed login returns 429; single login_attempts document with correct identifier '<first-xff-ip>:<email>' and locked_until set. (2) Dashboard cards.total_employees=8 (from hrms_employees collection) and cards.total_invoices=0 (from invoices collection, expected — no invoices seeded yet). Regression suite (resources, expenses, hrms, billing, discom 740217 consumers) unaffected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth_admin.py",
+    "/app/test_reports/pytest/auth_admin.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "auth.py::_client_ip now correctly extracts first token from X-Forwarded-For — good fix.",
+    "Dashboard now reads _db.hrms_employees and _db.invoices — matches actual collection names in HRMS/Billing modules."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_auth_admin.py (added assertions for total_employees > 0 and total_invoices >= 0)"
+  ],
+  "success_rate": {"backend": "100% (26/26)", "frontend": "N/A (not tested this iteration)"},
+  "test_credentials": "harivanshraj9@gmail.com / Prathvi@Admin2026 — works.",
+  "seed_data_creation": "Cleared login_attempts collection before brute-force test. Ephemeral TEST_* users created and cleaned via fixture teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 3 auth+admin fully verified. If re-running brute-force test, pre-clear login_attempts: db.login_attempts.delete_many({}). Dashboard values depend on seeded data — currently hrms_employees=8, invoices=0.",
+  "rca of the issue": "Previously-reported issues have been fixed by main agent. Verification: (a) POST /api/auth/login × 6 wrong-password now returns 429 on 6th; single login_attempts doc with locked_until set (confirmed via direct Mongo query). (b) GET /api/admin/dashboard now returns cards.total_employees=8 and cards.total_invoices=0 using correct collection names hrms_employees and invoices."
+}

@@ -204,7 +204,15 @@ async def dep_super(request: Request):
 
 
 def _client_ip(request: Request) -> str:
-    return (request.headers.get("x-forwarded-for") or request.client.host if request.client else "") or ""
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        # Take only the first (real client) IP; middle hops change per request.
+        ip = xff.split(",")[0].strip()
+        if ip:
+            return ip[:60]
+    if request.client:
+        return (request.client.host or "")[:60]
+    return ""
 
 
 async def _brute_check(email: str, ip: str):
@@ -536,8 +544,8 @@ async def admin_dashboard(user: dict = Depends(dep_admin)):
     inactive_users = await _db.users.count_documents({"status": "inactive"})
     total_resources = await _db.resources.count_documents({})
     total_expenses = await _db.expenses.count_documents({})
-    total_employees = await _db.employees.count_documents({}) if "employees" in await _db.list_collection_names() else 0
-    total_invoices = await _db.billing_invoices.count_documents({}) if "billing_invoices" in await _db.list_collection_names() else 0
+    total_employees = await _db.hrms_employees.count_documents({})
+    total_invoices = await _db.invoices.count_documents({})
     total_consumers = await _db.discom_consumers.count_documents({})
 
     role_agg = await _db.users.aggregate([

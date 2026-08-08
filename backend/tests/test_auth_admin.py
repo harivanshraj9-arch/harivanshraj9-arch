@@ -234,11 +234,19 @@ class TestDashboard:
         for k in ("cards", "roles", "recent_activity", "recent_logins"):
             assert k in d
         for c in ("total_users", "active_users", "inactive_users",
-                  "total_resources", "total_modules", "total_consumers"):
+                  "total_resources", "total_modules", "total_consumers",
+                  "total_employees", "total_invoices"):
             assert c in d["cards"]
         assert d["cards"]["total_consumers"] == 740217, (
             f"consumers preserved check: got {d['cards']['total_consumers']}"
         )
+        # After collection-name fix: hrms_employees seeded with 8
+        assert d["cards"]["total_employees"] > 0, (
+            f"expected total_employees>0 (seeded 8), got {d['cards']['total_employees']}"
+        )
+        # invoices may be 0 or positive; just assert it's an int >= 0
+        assert isinstance(d["cards"]["total_invoices"], int)
+        assert d["cards"]["total_invoices"] >= 0
 
 
 # ---------- ADMIN RESOURCES ----------
