@@ -1026,6 +1026,12 @@ init_auth(db)
 app.include_router(auth_router)
 app.include_router(admin_router)
 
+# Smart Meter & Material Inventory (Session A)
+from inventory import (inventory_router, init_inventory,
+                        ensure_inventory_indexes, seed_inventory_masters)
+init_inventory(db)
+app.include_router(inventory_router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -1050,6 +1056,8 @@ async def on_startup():
     await ensure_discom_indexes(db)
     await ensure_auth_indexes()
     await seed_super_admin()
+    await ensure_inventory_indexes(db)
+    await seed_inventory_masters(db)
 
 
 @app.on_event("shutdown")

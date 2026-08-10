@@ -11,6 +11,7 @@ import ReportsPage from "@/pages/hrms/ReportsPage";
 import SettingsPage from "@/pages/hrms/SettingsPage";
 import BillingPage from "@/pages/billing/BillingPage";
 import DiscomPage from "@/pages/discom/DiscomPage";
+import InventoryPage from "@/pages/inventory/InventoryPage";
 import AdminLogin from "@/pages/admin/AdminLogin";
 import ForgotPassword from "@/pages/admin/ForgotPassword";
 import ResetPassword from "@/pages/admin/ResetPassword";
@@ -41,6 +42,7 @@ function App() {
           <Route path="/hrms/settings" element={<SettingsPage />} />
           <Route path="/billing" element={<BillingPage />} />
           <Route path="/discom" element={<DiscomPage />} />
+          <Route path="/inventory" element={<AdminRoute><InventoryPage /></AdminRoute>} />
           <Route path="/admin/login" element={<AdminLogin />} />
           <Route path="/admin/forgot-password" element={<ForgotPassword />} />
           <Route path="/admin/reset-password" element={<ResetPassword />} />

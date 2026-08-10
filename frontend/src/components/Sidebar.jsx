@@ -28,6 +28,7 @@ export default function Sidebar({
   const onHrms = location.pathname.startsWith("/hrms") || activeRoute === "hrms";
   const onBilling = location.pathname === "/billing" || activeRoute === "billing";
   const onDiscom = location.pathname.startsWith("/discom") || activeRoute === "discom";
+  const onInventory = location.pathname.startsWith("/inventory") || activeRoute === "inventory";
 
   const handleCategoryClick = (key) => {
     if (onDashboard && onSelect) {
@@ -131,6 +132,19 @@ export default function Sidebar({
           <Database className="w-4 h-4 shrink-0" />
           <span className="flex-1 text-left">DISCOM</span>
           {onDiscom && (
+            <motion.div layoutId="sidebar-active-dot" className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--energy))]" />
+          )}
+        </button>
+
+        <button
+          data-testid="nav-inventory"
+          onClick={() => { navigate("/inventory"); onClose?.(); }}
+          className={`w-full group flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all
+            ${onInventory ? "bg-foreground text-background" : "text-foreground/70 hover:text-foreground hover:bg-muted"}`}
+        >
+          <Package className="w-4 h-4 shrink-0" />
+          <span className="flex-1 text-left">Inventory</span>
+          {onInventory && (
             <motion.div layoutId="sidebar-active-dot" className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--energy))]" />
           )}
         </button>

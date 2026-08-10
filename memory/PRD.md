@@ -416,3 +416,38 @@ Frontend guard `AdminRoute` — redirects to `/admin/login` if no token, and adm
 ### Files added / changed
 - `.github/workflows/android-build.yml` — GitHub Actions build pipeline
 - `/app/DIRECT_INSTALL.md` — end-to-end sideload guide
+
+## Update — 2026-02-10 · Inventory Session A (Foundations)
+
+### Delivered — Smart Meter & Material Inventory Management (Session A of 3)
+
+**Backend `/app/backend/inventory.py`** (~500 lines, wired via `include_router` in `server.py`)
+- **5 collections**: `inv_master`, `inv_smart_meters`, `inv_old_meters`, `inv_cables`, `inv_ledger` (immutable audit)
+- **Master Data**: 11 types (division, sub_division, sdo, store, agency, installer, meter_make, meter_model, cable_type, cable_size, document_type). CRUD + Excel import. 26 masters seeded on startup.
+- **Smart Meter**: full 16 fields, duplicate-serial prevention (uppercased), 6-state status pipeline, list with paginated search + filter, Excel import.
+- **Old Meter**: 17 fields, 6 condition states, 3 deposit states, auto-sets deposit_date on Deposited status.
+- **Cable Inventory**: per-drum with auto-balance formula `opening + received + returned − issued − damaged`, recomputed on every write.
+- **Dashboard endpoint**: aggregates all 24 KPIs (Smart 6 + Old 5 + Cable 6 + placeholder Documents 6), status pie distribution, top 8 divisions bar, 15 most recent ledger entries.
+- **Immutable ledger**: every create/update/delete on any inventory entity writes an entry with before/after snapshot + actor + timestamp.
+- **Excel import** on all 3 stock collections + all 11 master types with duplicate detection + row-level error reporting.
+- All endpoints protected by existing JWT auth (`dep_current` for read, `dep_admin` for write).
+
+**Frontend `/app/frontend/src/pages/inventory/InventoryPage.jsx`**
+- New sidebar entry **Inventory** (icon `Package`, orange indicator dot) at `/inventory`, gated by `AdminRoute`.
+- 5 tabs: **Dashboard / Smart Meter / Old Meter / Cable / Master Data**.
+- Dashboard: 3 KPI groups (17 tiles), pie chart of smart-meter status distribution, bar chart of division-wise stock, recent-transactions ledger feed.
+- Smart/Old/Cable pages use a shared `CrudList` component with: search, per-column filters, pagination (25/page), Add/Edit/Delete, History view per row (reads from ledger), Excel import.
+- Master Data page: 11-tab pill selector, inline add, code field, Excel import per type.
+- Status pills with color coding (Available emerald / Issued amber / Installed blue / Returned purple / Damaged red).
+- Mobile bottom nav + Quick Expense FAB still work.
+
+**Verified E2E**
+- Login → /inventory dashboard renders 3 KPI groups + charts
+- Smart Meter tab shows seeded `SM-TEST-001` with Available badge
+- Backend curls: create meter, duplicate serial rejected 409, add cable with balance=500 all working
+- 26 seeded masters visible on Master Data tab
+- Existing modules untouched (regression: /expenses, /hrms, /billing, /discom, /admin all still load)
+
+### Pending / Next
+- **Session B**: Smart Meter Installation form (photos), New Meter Gate Pass (PDF upload + serial validation), Cable Issue slip, Used Cable BISignoff (verification workflow), Document Repository
+- **Session C**: Cross-linked history view, 19 reports (Excel/PDF/Print), full audit trail with previous/new value diff, advanced multi-field search, mobile card layouts, regression pass
