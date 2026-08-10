@@ -32,6 +32,11 @@ def init_discom(db):
     _db = db
 
 
+async def ensure_discom_indexes(db):
+    """Deprecated wrapper — kept for backward compat, delegates to ensure_indexes()."""
+    await ensure_indexes(db)
+
+
 DIVISIONS = [
     {"code": "SITAPUR-I", "name": "Sitapur Division-I", "edc": "EDC Sitapur"},
     {"code": "SITAPUR-II", "name": "Sitapur Division-II", "edc": "EDC Sitapur"},
@@ -339,7 +344,8 @@ async def list_consumers(
         raise HTTPException(400, "Unknown division")
     query: Dict[str, Any] = {"division": division}
     if con_status:
-        query["CON_STATUS"] = con_status
+        # case-insensitive exact match (data has mixed-case values like "In Service", "PD")
+        query["CON_STATUS"] = {"$regex": f"^{con_status}$", "$options": "i"}
     if supply_type:
         query["SUPPLY_TYPE"] = supply_type
     if town:
@@ -348,15 +354,36 @@ async def list_consumers(
         query["TOTAL_OUTSTANDING"] = {"$gt": outstanding_gt}
     if q:
         qs = q.strip()
-        rex = {"$regex": qs, "$options": "i"}
+        # Escape regex meta-characters (mobile numbers etc. are literal)
+        import re as _re
+        qs_esc = _re.escape(qs)
+        # Anchored prefix regex — case-sensitive on identifiers → uses B-tree index (fast on 700k rows)
+        prefix_cs = {"$regex": f"^{qs_esc}"}
+        # For NAME / ADDRESS / VILLAGE (mixed case text) we still need case-insensitive but anchored
+        prefix_ci = {"$regex": f"^{qs_esc}", "$options": "i"}
+        # For NAME substring inside string (allow finding "MOHD AZEEM" or "AZEEM"), use case-insensitive
+        contains_ci = {"$regex": qs_esc, "$options": "i"}
+
         if field and field in SEARCH_FIELDS:
-            query[field] = rex
+            # Single-field search — use appropriate matcher
+            if field in ("KNO", "SCNO", "ACCT_ID", "MOBILE_NO", "METER_BADGE_NO"):
+                query[field] = prefix_cs
+            elif field in ("NAME", "FATHER_NAME", "ADDRESS", "TOWN", "VILLAGE_NAME"):
+                query[field] = contains_ci
+            else:
+                query[field] = contains_ci
         else:
+            # Global "any field" search — use index-friendly matchers per field type
             query["$or"] = [
-                {"KNO": rex}, {"SCNO": rex}, {"ACCT_ID": rex},
-                {"NAME": rex}, {"FATHER_NAME": rex},
-                {"MOBILE_NO": rex}, {"METER_BADGE_NO": rex},
-                {"ADDRESS": rex}, {"VILLAGE_NAME": rex},
+                {"KNO": prefix_cs},
+                {"SCNO": prefix_cs},
+                {"ACCT_ID": prefix_cs},
+                {"MOBILE_NO": prefix_cs},
+                {"METER_BADGE_NO": prefix_cs},
+                {"NAME": prefix_ci},
+                {"FATHER_NAME": prefix_ci},
+                {"VILLAGE_NAME": prefix_ci},
+                {"ADDRESS": contains_ci},
             ]
 
     skip = (max(1, page) - 1) * page_size
@@ -416,7 +443,10 @@ async def ensure_indexes(db):
     await db.discom_consumers.create_index([("division", 1)])
     await db.discom_consumers.create_index([("division", 1), ("KNO", 1)])
     await db.discom_consumers.create_index([("division", 1), ("SCNO", 1)])
+    await db.discom_consumers.create_index([("division", 1), ("ACCT_ID", 1)])
     await db.discom_consumers.create_index([("division", 1), ("MOBILE_NO", 1)])
     await db.discom_consumers.create_index([("division", 1), ("NAME", 1)])
     await db.discom_consumers.create_index([("division", 1), ("METER_BADGE_NO", 1)])
+    await db.discom_consumers.create_index([("division", 1), ("CON_STATUS", 1)])
+    await db.discom_consumers.create_index([("division", 1), ("SUPPLY_TYPE", 1)])
     await db.discom_jobs.create_index([("started_at", -1)])

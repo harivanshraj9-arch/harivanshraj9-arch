@@ -523,3 +523,34 @@ Complete lifecycle test: Add `SM-LC-100` → create Approved `GP-001` → smart-
 - Full audit-trail diff viewer with before/after JSON compare (data is stored, needs a dedicated UI screen)
 - Mobile card layouts for the 4 lifecycle lists (Installation / GP / Cable Issue / BISignoff) — currently rendering as horizontally-scrollable tables
 - PDF/Print export variants (Excel covers the primary need)
+
+## Update — 2026-02-10 · DISCOM Search Box Fixes
+
+### Reported
+- User: "PLZ FIX SEARCH BOX ABLE FOE SEARCH IN DISCOM MODULE" — Master Data search box on `/discom` wasn't behaving like a real search.
+
+### Root causes found
+1. **No live-search** — user had to hit `Enter` or click a `Search` button; no debounced auto-search as they typed.
+2. **Wrong filter dropdown options** — `Any status` had ACTIVE / DISCONNECTED / PERMANENT DISCONNECTED, but real data uses `In Service`, `PD`, `TD`, `TD Migrated`. `Any supply` had URBAN/RURAL, but data uses numeric codes (10, 17, 20, 51, 60, 64). These filters silently returned 0 matches.
+3. **6-second query latency** — the `$or` regex was un-anchored + case-insensitive across 9 fields → forced a full collection scan of 148k rows per division.
+
+### Delivered
+- **Auto-search with 400ms debounce** on query, field, status, supply-type — no button/keypress required. Enter still works as instant trigger, `X` in the input clears the query, and a new `Reset` button clears all filters at once.
+- **Corrected filter dropdowns** to match real UPPCL data values (In Service / PD / TD / TD Migrated for status, 6 supply codes with labels).
+- **Case-insensitive `CON_STATUS` matching** in the backend so filter is forgiving.
+- **Backend query rewrite** for indexed search:
+  - Identifier fields (KNO, SCNO, ACCT_ID, MOBILE_NO, METER_BADGE_NO): anchored case-sensitive prefix regex → uses B-tree index.
+  - Text fields (NAME, FATHER_NAME, VILLAGE_NAME): anchored case-insensitive prefix regex.
+  - ADDRESS: substring case-insensitive (last-resort fallback).
+  - `re.escape(qs)` protects against user-typed regex metacharacters.
+- **Extra indexes** added for `ACCT_ID`, `CON_STATUS`, `SUPPLY_TYPE` on `discom_consumers`.
+
+### Measured impact
+- Mobile number search: 6.0 s → ~0.5 s (12x faster)
+- Address substring "KOTE": ~0.9 s
+- Full-list count (148,287): ~0.2 s
+- "MOHD" + "In Service" combo filter live-updates within ~1 s of the last keystroke.
+
+### Files touched
+- `/app/frontend/src/pages/discom/DiscomPage.jsx` — debounced auto-search useEffect, X-clear button, Reset button, corrected dropdown options
+- `/app/backend/discom.py` — index-friendly regex query, extra indexes, case-insensitive CON_STATUS filter

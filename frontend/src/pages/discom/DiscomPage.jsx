@@ -162,14 +162,16 @@ function DivisionPanel({ division, onChanged }) {
   const [data, setData] = useState({ items: [], total: 0, columns: [] });
   const [searching, setSearching] = useState(false);
 
-  const load = async (nextPage = page) => {
+  const load = async (nextPage = page, overrides = {}) => {
     if (!division.row_count) { setData({ items: [], total: 0, columns: [] }); return; }
     setSearching(true);
     try {
       const d = await discomApi.listConsumers({
         division: division.code,
-        q, field,
-        con_status: conStatus, supply_type: supplyType,
+        q: overrides.q !== undefined ? overrides.q : q,
+        field: overrides.field !== undefined ? overrides.field : field,
+        con_status: overrides.conStatus !== undefined ? overrides.conStatus : conStatus,
+        supply_type: overrides.supplyType !== undefined ? overrides.supplyType : supplyType,
         page: nextPage, page_size: 25,
       });
       setData(d);
@@ -178,7 +180,20 @@ function DivisionPanel({ division, onChanged }) {
     finally { setSearching(false); }
   };
 
+  // Initial load on division change
   useEffect(() => { load(1); /* eslint-disable-line */ }, [division.code, division.row_count]);
+
+  // Debounced auto-search when query / filters change (400ms after last keystroke)
+  useEffect(() => {
+    if (!division.row_count) return;
+    const t = setTimeout(() => { load(1); }, 400);
+    return () => clearTimeout(t);
+    /* eslint-disable-next-line */
+  }, [q, field, conStatus, supplyType]);
+
+  const clearSearch = () => {
+    setQ(""); setField(""); setConStatus(""); setSupplyType("");
+  };
 
   const ingestUrl = async () => {
     const url = DISCOM_ARTIFACT_URLS[division.code];
@@ -294,9 +309,22 @@ function DivisionPanel({ division, onChanged }) {
             value={q}
             onChange={e => setQ(e.target.value)}
             onKeyDown={e => e.key === "Enter" && load(1)}
-            placeholder="Search KNO, SCNO, name, mobile, meter…"
-            className="w-full h-10 pl-9 pr-3 rounded-lg bg-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))]"
+            placeholder="Search KNO, SCNO, ACCT_ID, name, mobile, meter, address…"
+            className="w-full h-10 pl-9 pr-10 rounded-lg bg-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))]"
           />
+          {q && (
+            <button
+              data-testid="search-clear"
+              onClick={() => setQ("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full hover:bg-muted flex items-center justify-center"
+              aria-label="Clear search"
+            >
+              <X className="w-3.5 h-3.5 text-muted-foreground" />
+            </button>
+          )}
+          {searching && (
+            <Loader2 className="w-4 h-4 animate-spin absolute right-10 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          )}
         </div>
         <select data-testid="search-field" value={field} onChange={e => setField(e.target.value)} className="h-10 px-3 rounded-lg bg-background border border-border text-sm">
           <option value="">Any field</option>
@@ -307,21 +335,26 @@ function DivisionPanel({ division, onChanged }) {
           <option value="MOBILE_NO">Mobile</option>
           <option value="METER_BADGE_NO">Meter No</option>
         </select>
-        <select value={conStatus} onChange={e => setConStatus(e.target.value)} className="h-10 px-3 rounded-lg bg-background border border-border text-sm">
+        <select data-testid="filter-status" value={conStatus} onChange={e => setConStatus(e.target.value)} className="h-10 px-3 rounded-lg bg-background border border-border text-sm">
           <option value="">Any status</option>
-          <option value="ACTIVE">Active</option>
-          <option value="DISCONNECTED">Disconnected</option>
-          <option value="PERMANENT DISCONNECTED">Permanently Disconnected</option>
+          <option value="In Service">In Service</option>
+          <option value="PD">PD (Perm. Disconnected)</option>
+          <option value="TD">TD (Temp. Disconnected)</option>
+          <option value="TD Migrated">TD Migrated</option>
         </select>
-        <select value={supplyType} onChange={e => setSupplyType(e.target.value)} className="h-10 px-3 rounded-lg bg-background border border-border text-sm">
+        <select data-testid="filter-supply" value={supplyType} onChange={e => setSupplyType(e.target.value)} className="h-10 px-3 rounded-lg bg-background border border-border text-sm">
           <option value="">Any supply</option>
-          <option value="URBAN">Urban</option>
-          <option value="RURAL">Rural</option>
+          <option value="10">10 · Domestic (LMV-1)</option>
+          <option value="17">17 · Rural LMV-1</option>
+          <option value="20">20 · Commercial (LMV-2)</option>
+          <option value="51">51 · Public Lamp (LMV-6)</option>
+          <option value="60">60 · Industrial (LMV-6)</option>
+          <option value="64">64 · Industrial (HV-2)</option>
         </select>
-        <button data-testid="search-btn" onClick={() => load(1)} disabled={searching}
-          className="h-10 px-4 rounded-lg bg-foreground text-background text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-50">
-          {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-          Search
+        <button data-testid="search-reset" onClick={clearSearch} disabled={searching || (!q && !field && !conStatus && !supplyType)}
+          className="h-10 px-4 rounded-lg border border-border text-sm font-semibold inline-flex items-center justify-center gap-1.5 hover:bg-muted disabled:opacity-40">
+          <X className="w-4 h-4" />
+          Reset
         </button>
       </div>
 

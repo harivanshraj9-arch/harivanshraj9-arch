@@ -1108,12 +1108,29 @@ REPORT_MAP = {
 
 
 @inventory_router.get("/reports/{kind}.xlsx")
-async def export_xlsx(kind: str, user: dict = Depends(dep_current)):
+async def export_xlsx(kind: str, user: dict = Depends(dep_current),
+                       start: Optional[str] = None, end: Optional[str] = None,
+                       division: Optional[str] = None):
     if kind not in REPORT_MAP:
         raise HTTPException(400, f"Unknown report kind. Options: {sorted(REPORT_MAP)}")
     coll_name, sheet_name, cols = REPORT_MAP[kind]
     coll = getattr(_db, coll_name)
     query = {} if coll_name == "inv_ledger" else {"deleted_at": {"$exists": False}}
+    # Determine the date field per collection
+    date_field = {
+        "inv_ledger": "timestamp",
+        "inv_installations": "installation_date",
+        "inv_gate_passes": "gate_pass_date",
+        "inv_cable_issues": "issue_date",
+        "inv_bisignoffs": "bisignoff_date",
+    }.get(coll_name, "created_at")
+    if start or end:
+        rq = {}
+        if start: rq["$gte"] = start
+        if end: rq["$lte"] = end + "T23:59:59"
+        query[date_field] = rq
+    if division:
+        query["division"] = division
     sort_field = "timestamp" if coll_name == "inv_ledger" else "created_at"
     docs = await coll.find(query, {"_id": 0}).sort(sort_field, -1).to_list(20000)
 
@@ -1161,6 +1178,164 @@ async def report_summary(user: dict = Depends(dep_current)):
             latest_ts = latest[0].get("timestamp") or latest[0].get("created_at")
         out.append({"kind": kind, "name": sheet_name, "rows": total, "last_updated": latest_ts})
     return {"reports": out}
+
+
+# ================================================================
+#            BRANDED HTML PRINT (Gate Pass / BISignoff)
+# ================================================================
+from fastapi.responses import HTMLResponse
+
+
+def _print_header_html():
+    return """
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: 'Arial', 'Helvetica', sans-serif; color: #111; background: #fff; padding: 24px; font-size: 12px; line-height: 1.4; }
+      .header { border-bottom: 3px solid #0B1E3F; padding-bottom: 12px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-start; }
+      .brand { display: flex; align-items: center; gap: 12px; }
+      .logo { width: 48px; height: 48px; background: #0B1E3F; color: #fff; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 22px; }
+      .brand-text .name { font-size: 18px; font-weight: 900; color: #0B1E3F; letter-spacing: 0.5px; }
+      .brand-text .tag { font-size: 10px; letter-spacing: 2px; color: #94A3B8; text-transform: uppercase; font-weight: 700; margin-top: 2px; }
+      .doc-title { text-align: right; }
+      .doc-title h1 { font-size: 22px; font-weight: 900; color: #0B1E3F; letter-spacing: 1px; }
+      .doc-title .num { font-family: 'Courier New', monospace; font-size: 13px; color: #444; margin-top: 4px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin: 14px 0; }
+      .field { border-bottom: 1px dotted #e5e7eb; padding: 6px 0; }
+      .field .k { font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase; color: #64748b; font-weight: 700; }
+      .field .v { font-size: 12px; font-weight: 600; margin-top: 2px; }
+      table.tbl { width: 100%; border-collapse: collapse; margin: 14px 0; }
+      table.tbl th { background: #0B1E3F; color: #fff; font-size: 10px; letter-spacing: 1px; padding: 8px; text-align: left; text-transform: uppercase; }
+      table.tbl td { padding: 6px 8px; border-bottom: 1px solid #e5e7eb; font-size: 11px; }
+      table.tbl tr:nth-child(even) td { background: #f8fafc; }
+      .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #e5e7eb; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 32px; font-size: 10px; }
+      .sig-box { border-top: 1px solid #111; padding-top: 6px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-top: 48px; text-align: center; }
+      .status-badge { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 10px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; }
+      .stamp { color: #22C55E; }
+      .meta { color: #64748b; font-size: 10px; margin-top: 20px; text-align: center; }
+      @media print { body { padding: 12mm; } .no-print { display: none; } }
+    </style>
+    """
+
+
+def _print_brand_block():
+    return """
+    <div class="brand">
+      <div class="logo">P</div>
+      <div class="brand-text">
+        <div class="name">PRATHVI POWER SOLUTIONS</div>
+        <div class="tag">Reliable Power · Smarter Solutions</div>
+      </div>
+    </div>
+    """
+
+
+def _field(k, v):
+    v = v if v not in (None, "", []) else "—"
+    return f'<div class="field"><div class="k">{k}</div><div class="v">{v}</div></div>'
+
+
+@inventory_router.get("/gate-passes/{gid}/print", response_class=HTMLResponse)
+async def print_gate_pass(gid: str, user: dict = Depends(dep_current)):
+    doc = await _db.inv_gate_passes.find_one({"id": gid}, {"_id": 0})
+    if not doc: raise HTTPException(404, "Not found")
+    serials = doc.get("meter_serials") or []
+    serial_rows = "".join(
+        f"<tr><td>{i+1}</td><td style='font-family:monospace'>{s}</td></tr>"
+        for i, s in enumerate(serials)
+    ) or "<tr><td colspan='2' style='text-align:center;color:#94a3b8'>No serials listed</td></tr>"
+
+    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>Gate Pass {doc.get('gate_pass_number')}</title>
+{_print_header_html()}</head><body>
+<div class="header">
+  {_print_brand_block()}
+  <div class="doc-title">
+    <h1>GATE PASS</h1>
+    <div class="num">No. {doc.get('gate_pass_number','—')}</div>
+    <div class="num">Date: {doc.get('gate_pass_date','—')}</div>
+  </div>
+</div>
+<div class="grid">
+  {_field('From Location', doc.get('from_location'))}
+  {_field('To Location', doc.get('to_location'))}
+  {_field('Division', doc.get('division'))}
+  {_field('Sub Division', doc.get('sub_division'))}
+  {_field('SDO', doc.get('sdo'))}
+  {_field('Agency / Vendor', doc.get('agency'))}
+  {_field('Vehicle Number', doc.get('vehicle_number'))}
+  {_field('Driver Name', doc.get('driver_name'))}
+  {_field('Driver Mobile', doc.get('driver_mobile'))}
+  {_field('Purpose', doc.get('purpose'))}
+  {_field('Prepared By', doc.get('prepared_by'))}
+  {_field('Approved By', doc.get('approved_by'))}
+</div>
+<div style="margin-top:8px"><span class="status-badge" style="background:#0EA5E9;color:#fff">Status · {doc.get('status','—').upper()}</span></div>
+<h3 style="margin-top:20px;font-size:13px;color:#0B1E3F;letter-spacing:1px">METER SERIALS ({len(serials)})</h3>
+<table class="tbl"><thead><tr><th style="width:60px">#</th><th>Serial Number</th></tr></thead><tbody>{serial_rows}</tbody></table>
+{f'<div>Remarks: <em>{doc.get("remarks")}</em></div>' if doc.get('remarks') else ''}
+<div class="footer">
+  <div class="sig-box">Prepared By</div>
+  <div class="sig-box">Store In-Charge</div>
+  <div class="sig-box">Received By</div>
+</div>
+<div class="meta">Generated on {datetime.now(timezone.utc).astimezone().strftime('%d %b %Y · %I:%M %p')} · PPS Inventory · This is a system-generated document.</div>
+<script>window.onload=()=>setTimeout(()=>window.print(),300);</script>
+</body></html>"""
+    return HTMLResponse(content=html)
+
+
+@inventory_router.get("/bisignoffs/{bid}/print", response_class=HTMLResponse)
+async def print_bisignoff(bid: str, user: dict = Depends(dep_current)):
+    doc = await _db.inv_bisignoffs.find_one({"id": bid}, {"_id": 0})
+    if not doc: raise HTTPException(404, "Not found")
+    status_color = "#22C55E" if doc.get("status") == "Verified" else "#F59E0B"
+    verified_stamp = ""
+    if doc.get("status") == "Verified":
+        verified_stamp = f"""<div style="position:absolute;top:110px;right:60px;border:4px solid #22C55E;color:#22C55E;padding:8px 24px;font-weight:900;font-size:16px;letter-spacing:3px;transform:rotate(-8deg);opacity:0.85;border-radius:4px">VERIFIED</div>"""
+
+    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>BISignoff {doc.get('bisignoff_number')}</title>
+{_print_header_html()}</head><body style="position:relative">
+{verified_stamp}
+<div class="header">
+  {_print_brand_block()}
+  <div class="doc-title">
+    <h1>BI-SIGNOFF</h1>
+    <div class="num">No. {doc.get('bisignoff_number','—')}</div>
+    <div class="num">Date: {doc.get('bisignoff_date','—')}</div>
+  </div>
+</div>
+<div class="grid">
+  {_field('Consumer / Work Reference', doc.get('consumer_reference'))}
+  {_field('Work Location', doc.get('work_location'))}
+  {_field('Division', doc.get('division'))}
+  {_field('Sub Division', doc.get('sub_division'))}
+  {_field('SDO', doc.get('sdo'))}
+  {_field('Installer', doc.get('installer'))}
+  {_field('Agency', doc.get('agency'))}
+</div>
+<h3 style="margin-top:20px;font-size:13px;color:#0B1E3F;letter-spacing:1px">CABLE CONSUMPTION</h3>
+<table class="tbl">
+  <thead><tr><th>Cable Type</th><th>Size</th><th>Drum No</th><th>Issued</th><th>Used</th><th>Balance / Return</th></tr></thead>
+  <tbody><tr>
+    <td>{doc.get('cable_type','—')}</td><td>{doc.get('cable_size','—')}</td>
+    <td style="font-family:monospace">{doc.get('drum_number','—')}</td>
+    <td>{doc.get('issued_qty',0)}</td>
+    <td><strong>{doc.get('used_qty',0)}</strong></td>
+    <td>{doc.get('balance_return',0)}</td>
+  </tr></tbody>
+</table>
+<div style="margin-top:8px"><span class="status-badge" style="background:{status_color};color:#fff">Status · {doc.get('status','—').upper()}</span>
+{f'<span style="margin-left:12px;font-size:10px;color:#64748b">Verified by {doc.get("verified_by")} on {doc.get("verified_at","")[:10]}</span>' if doc.get('status') == 'Verified' else ''}
+</div>
+{f'<div style="margin-top:14px">Remarks: <em>{doc.get("remarks")}</em></div>' if doc.get('remarks') else ''}
+<div class="footer">
+  <div class="sig-box">Installer</div>
+  <div class="sig-box">Consumer / Owner</div>
+  <div class="sig-box">Verifier</div>
+</div>
+<div class="meta">Generated on {datetime.now(timezone.utc).astimezone().strftime('%d %b %Y · %I:%M %p')} · PPS Inventory · This is a system-generated document.</div>
+<script>window.onload=()=>setTimeout(()=>window.print(),300);</script>
+</body></html>"""
+    return HTMLResponse(content=html)
 
 
 async def seed_inventory_masters(db):
