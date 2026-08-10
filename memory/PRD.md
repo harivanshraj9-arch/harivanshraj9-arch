@@ -451,3 +451,75 @@ Frontend guard `AdminRoute` — redirects to `/admin/login` if no token, and adm
 ### Pending / Next
 - **Session B**: Smart Meter Installation form (photos), New Meter Gate Pass (PDF upload + serial validation), Cable Issue slip, Used Cable BISignoff (verification workflow), Document Repository
 - **Session C**: Cross-linked history view, 19 reports (Excel/PDF/Print), full audit trail with previous/new value diff, advanced multi-field search, mobile card layouts, regression pass
+
+## Update — 2026-02-10 · Inventory Session B + mini Session C (Transactions & History)
+
+### 4 new lifecycle collections
+- `inv_installations`, `inv_gate_passes`, `inv_cable_issues`, `inv_bisignoffs`
+- Every mutation writes to the immutable `inv_ledger`
+- Documents/photos stored as base64 data URLs (client-side compressed to <2MB JPEG for photos, PDFs pass through)
+
+### Auto-inventory-movement rules (backend-enforced)
+- **Installation.save** → sets smart meter `status="Installed"`; if `old_meter_serial` provided, auto-creates the old meter record (Good/Pending)
+- **Gate Pass Approved** → sets all listed meters to `Issued`. Serial validation blocks meters that are already Issued/Installed/Damaged/Returned (returns 400 with list)
+- **Cable Issue.save** → validates balance ≥ quantity, then increments `issued_qty` and recomputes drum balance
+- **BISignoff status→Verified** → increments cable `used_qty` on the linked drum; the BISignoff record is then **locked** (only remarks editable)
+
+### Frontend tabs added
+`Inventory` sidebar now has **10 tabs**: Dashboard / Smart Meter / Old Meter / Cable / **Installation / Gate Pass / Cable Issue / BISignoff / History** / Master Data
+- `PhotoInput` component reused across all forms — camera capture on mobile, gallery fallback, client-side JPEG compression, PDF pass-through, preview + remove
+- Inline status dropdowns on list rows (Gate Pass / BISignoff) — one-click state transitions
+- Verified BISignoff shows a **🔒 badge** and disables the status dropdown
+
+### Cross-linked History view (`/inventory` → History tab)
+Type any smart meter serial → renders 5 vertical stage cards:
+1. **Meter Stock** (serial, make/model, current status, division)
+2. **Gate Pass** (number, date, from→to, status)
+3. **Installation** (consumer, date, installer, status, **after photo inline**)
+4. **Old Meter Removed** (serial, condition, deposit status)
+5. **BISignoff Verification** (number, used qty, status)
+
+Green dot = stage done, amber = pending, muted = not yet started.
+
+### Verified E2E (manual + curl)
+Complete lifecycle test: Add `SM-LC-100` → create Approved `GP-001` → smart-meter status auto → Issued → create Installation → smart-meter status auto → Installed, `OLD-42` auto-created (Good/Pending). Cross-history endpoint returns all 4 linked entities.
+
+### Files touched
+- `/app/backend/inventory.py` (+380 lines): 4 new endpoint groups + `history/serial/{sn}` cross-linked endpoint + indexes
+- `/app/frontend/src/lib/inventoryApi.js` (+18 methods)
+- `/app/frontend/src/pages/inventory/InventoryPage.jsx` (+600 lines): PhotoInput + 5 new tab components + shared StageCard/Row for history
+
+### Pending / Next (real Session C)
+- 19 pre-built reports (Excel/PDF/Print) — I built the cross-linked view here but the 18 other tabular reports still need dedicated export endpoints
+- Full audit-trail diff viewer (before/after JSON compare) — data already stored, needs UI
+- Advanced multi-field search on every list module
+- Mobile card layouts for the 4 new lifecycle lists (currently tables — mobile shows horizontal scroll)
+
+## Update — 2026-02-10 · Inventory Session C (Reports & Excel Exports)
+
+### Delivered
+- **8 branded Excel reports** — one endpoint per inventory register: Smart Meters, Old Meters, Cables, Installations, Gate Passes, Cable Issues, BISignoffs, Audit Trail (ledger).
+- Every file:
+  - Dark-navy header row (font white bold on #0B1E3F fill)
+  - Frozen top row
+  - Auto-sized columns (12–40 char clamp)
+  - Filename: `pps-inventory-<kind>-<YYYYMMDD-HHMM>.xlsx`
+  - All non-deleted rows (up to 20,000 per report)
+- **`GET /api/inventory/reports/summary`** — dashboard-style summary with row counts + last-updated timestamps used by the UI.
+- **`GET /api/inventory/reports/{kind}.xlsx`** — streaming download endpoint (StreamingResponse + openpyxl).
+- **New Reports tab** in `/inventory` sidebar — 8 cards, each showing name / row count / last-updated / one-click Download Excel button. Disabled + greyed for empty collections. Uses axios blob response + Blob URL for browser save.
+
+### Verified E2E
+- Playwright triggers `report-download-smart-meters` → intercepts real download → confirms `pps-inventory-smart-meters-2026-08-10.xlsx` size 5,627 bytes.
+- Summary API returns all 8 reports with correct counts (2 smart, 1 old, 1 cable, 1 install, 1 GP, 8 audit).
+
+### Files touched
+- `/app/backend/inventory.py` (+120 lines): `REPORT_MAP`, `GET /reports/{kind}.xlsx`, `GET /reports/summary`
+- `/app/frontend/src/lib/inventoryApi.js` (+3 methods)
+- `/app/frontend/src/pages/inventory/InventoryPage.jsx` (+70 lines Reports component)
+
+### Deferred to future sessions
+- 19-plus specialised filter-based reports (date-range Excel + PDF prints) — currently exporting full snapshots per collection
+- Full audit-trail diff viewer with before/after JSON compare (data is stored, needs a dedicated UI screen)
+- Mobile card layouts for the 4 lifecycle lists (Installation / GP / Cable Issue / BISignoff) — currently rendering as horizontally-scrollable tables
+- PDF/Print export variants (Excel covers the primary need)

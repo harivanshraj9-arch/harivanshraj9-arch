@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Menu, X, Zap, Package, LayoutDashboard, Cable, Cpu, Database,
-  Settings2, Plus, Search, Upload, Trash2, Edit2, History, Loader2 } from "lucide-react";
+  Settings2, Plus, Search, Upload, Trash2, Edit2, History, Loader2,
+  Camera, ImageOff, FileText, ShieldCheck, GitBranch, Download, BarChart2 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, CartesianGrid } from "recharts";
 import { Toaster, toast } from "sonner";
@@ -15,6 +16,12 @@ const TABS = [
   { key: "smart", label: "Smart Meter", icon: Cpu },
   { key: "old", label: "Old Meter", icon: Cpu },
   { key: "cable", label: "Cable", icon: Cable },
+  { key: "install", label: "Installation", icon: ShieldCheck },
+  { key: "gatepass", label: "Gate Pass", icon: FileText },
+  { key: "cableissue", label: "Cable Issue", icon: Upload },
+  { key: "bisignoff", label: "BISignoff", icon: FileText },
+  { key: "history", label: "History", icon: GitBranch },
+  { key: "reports", label: "Reports", icon: BarChart2 },
   { key: "master", label: "Master Data", icon: Settings2 },
 ];
 
@@ -86,6 +93,12 @@ export default function InventoryPage() {
           {tab === "smart" && <SmartMeters />}
           {tab === "old" && <OldMeters />}
           {tab === "cable" && <Cables />}
+          {tab === "install" && <Installations />}
+          {tab === "gatepass" && <GatePasses />}
+          {tab === "cableissue" && <CableIssues />}
+          {tab === "bisignoff" && <BISignoffs />}
+          {tab === "history" && <CrossHistory />}
+          {tab === "reports" && <Reports />}
           {tab === "master" && <MasterData />}
           <footer className="pt-6 pb-10 border-t border-border text-xs text-muted-foreground">
             © 2026 Prathvi Power Solutions · Inventory Module (Session A)
@@ -655,3 +668,706 @@ function HistoryDialog({ row, items, onClose }) {
     </div>
   );
 }
+
+/* ================================================================
+   SESSION B COMPONENTS
+   ================================================================ */
+
+async function compressPhoto(file, maxEdge = 1400) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => {
+      const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url;
+    });
+    let { width, height } = img;
+    if (width > maxEdge || height > maxEdge) {
+      const s = Math.min(maxEdge / width, maxEdge / height);
+      width = Math.round(width * s); height = Math.round(height * s);
+    }
+    const c = document.createElement("canvas");
+    c.width = width; c.height = height;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(img, 0, 0, width, height);
+    let quality = 0.85, dataUrl = c.toDataURL("image/jpeg", quality);
+    while (dataUrl.length > 2 * 1024 * 1024 && quality > 0.4) {
+      quality -= 0.15; dataUrl = c.toDataURL("image/jpeg", quality);
+    }
+    return { dataUrl, name: (file.name || "photo").replace(/\.[^.]+$/, "") + ".jpg" };
+  } finally { URL.revokeObjectURL(url); }
+}
+
+function PhotoInput({ label, value, name, onChange, testid }) {
+  const [busy, setBusy] = useState(false);
+  const handle = async (e) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    setBusy(true);
+    try {
+      if (f.type.startsWith("image/")) {
+        const c = await compressPhoto(f);
+        onChange(c.dataUrl, c.name);
+      } else {
+        // PDF etc — read as base64
+        const reader = new FileReader();
+        reader.onload = () => onChange(reader.result, f.name);
+        reader.readAsDataURL(f);
+      }
+    } finally { setBusy(false); e.target.value = ""; }
+  };
+  return (
+    <div>
+      <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{label}</label>
+      {value ? (
+        <div className="mt-1 relative rounded-lg border border-border overflow-hidden bg-muted">
+          {value.startsWith("data:image") ? (
+            <img src={value} alt={name} className="w-full max-h-40 object-contain bg-black/5" />
+          ) : (
+            <div className="p-3 text-xs flex items-center gap-2"><FileText className="w-4 h-4"/> {name || "document"}</div>
+          )}
+          <button type="button" onClick={() => onChange(null, null)}
+            className="absolute top-1 right-1 w-8 h-8 rounded-full bg-black/70 text-white flex items-center justify-center">
+            <ImageOff className="w-4 h-4"/>
+          </button>
+        </div>
+      ) : (
+        <label className="mt-1 h-11 rounded-lg border border-dashed border-border text-xs font-semibold inline-flex items-center justify-center gap-2 w-full cursor-pointer hover:bg-muted">
+          {busy ? <Loader2 className="w-4 h-4 animate-spin"/> : <Camera className="w-4 h-4"/>}
+          {busy ? "Processing…" : "Choose file / snap"}
+          <input data-testid={testid} type="file" accept="image/*,application/pdf" className="hidden" onChange={handle} />
+        </label>
+      )}
+    </div>
+  );
+}
+
+/* --------- Installations --------- */
+function Installations() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [dlg, setDlg] = useState(null);
+  const load = async () => {
+    setLoading(true);
+    try { setItems((await inventoryApi.listInstallations({ page_size: 100 })).items); }
+    catch (e) { toast.error(formatApiError(e)); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="font-heading text-3xl sm:text-4xl font-black tracking-tight">Installations</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Log a smart meter installation. Auto-updates meter status → Installed and creates the old meter record.</p>
+        </div>
+        <button onClick={() => setDlg({})} className="h-10 px-4 rounded-lg bg-foreground text-background text-sm font-semibold inline-flex items-center gap-1.5"><Plus className="w-4 h-4"/>New Installation</button>
+      </div>
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/50 text-[10px] uppercase tracking-wider">
+            <tr><th className="px-3 py-2 text-left">Date</th><th className="text-left">Consumer</th><th className="text-left">New Serial</th><th className="text-left">Old Serial</th><th className="text-left">Division</th><th className="text-left">Status</th></tr>
+          </thead>
+          <tbody>
+            {loading && <tr><td colSpan={6} className="text-center py-6"><Loader2 className="w-4 h-4 inline animate-spin"/></td></tr>}
+            {!loading && items.length === 0 && <tr><td colSpan={6} className="text-center py-6 text-sm text-muted-foreground">No installations yet</td></tr>}
+            {items.map(r => (
+              <tr key={r.id} className="border-t border-border hover:bg-muted/30">
+                <td className="px-3 py-1.5 text-xs">{r.installation_date}</td>
+                <td className="px-3 py-1.5"><div className="font-semibold">{r.consumer_name}</div><div className="text-[10px] text-muted-foreground">{r.consumer_number}</div></td>
+                <td className="px-3 py-1.5 font-mono text-xs">{r.new_meter_serial}</td>
+                <td className="px-3 py-1.5 font-mono text-xs">{r.old_meter_serial || "—"}</td>
+                <td className="px-3 py-1.5 text-xs">{r.division || "—"}</td>
+                <td className="px-3 py-1.5"><span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_STYLE[r.status] || "bg-muted"}`}>{r.status}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {dlg && <InstallDialog onClose={() => setDlg(null)} onSaved={() => { setDlg(null); load(); }} />}
+    </div>
+  );
+}
+
+function InstallDialog({ onClose, onSaved }) {
+  const [f, setF] = useState({
+    installation_date: new Date().toISOString().slice(0,10),
+    consumer_name: "", consumer_number: "", new_meter_serial: "",
+    old_meter_serial: "", division: "", sub_division: "", sdo: "",
+    installer: "", agency: "", mobile_number: "", address: "", status: "Installed",
+    before_photo: null, before_name: null,
+    after_photo: null, after_name: null,
+    meter_photo: null, meter_name: null,
+    remarks: "",
+  });
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!f.consumer_name || !f.consumer_number || !f.new_meter_serial) return toast.error("Consumer + new meter serial required");
+    setBusy(true);
+    try {
+      await inventoryApi.addInstallation({ ...f, new_meter_serial: f.new_meter_serial.toUpperCase(),
+        old_meter_serial: f.old_meter_serial?.toUpperCase() || null });
+      toast.success("Installation logged"); onSaved();
+    } catch (e) { toast.error(formatApiError(e)); }
+    finally { setBusy(false); }
+  };
+  const set = (k, v) => setF(s => ({ ...s, [k]: v }));
+  const inp = (k, label, opts = {}) => (
+    <div className={opts.full ? "sm:col-span-2" : ""}>
+      <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{label}</label>
+      <input type={opts.type || "text"} value={f[k] || ""} onChange={e => set(k, e.target.value)}
+        className="mt-1 w-full h-10 px-3 rounded-lg bg-background border border-border text-sm" />
+    </div>
+  );
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-2">
+      <div className="w-full max-w-3xl bg-card border border-border rounded-2xl overflow-hidden max-h-[92vh] flex flex-col">
+        <div className="p-4 border-b border-border flex justify-between items-center">
+          <h3 className="font-heading text-lg font-bold">New Installation</h3>
+          <button onClick={onClose}><X className="w-4 h-4"/></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {inp("installation_date", "Date *", { type: "date" })}
+          <div>
+            <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Status</label>
+            <select value={f.status} onChange={e => set("status", e.target.value)} className="mt-1 w-full h-10 px-3 rounded-lg bg-background border border-border text-sm">
+              {["Pending","Installed","Rejected","Revisit Required","Completed"].map(s => <option key={s}>{s}</option>)}
+            </select>
+          </div>
+          {inp("consumer_name", "Consumer Name *")}
+          {inp("consumer_number", "Consumer Number *")}
+          {inp("new_meter_serial", "New Smart Meter Serial *")}
+          {inp("old_meter_serial", "Old Meter Serial (optional)")}
+          {inp("division", "Division")}
+          {inp("sub_division", "Sub Division")}
+          {inp("sdo", "SDO")}
+          {inp("installer", "Installer")}
+          {inp("agency", "Agency / Vendor")}
+          {inp("mobile_number", "Mobile Number")}
+          {inp("address", "Address", { full: true })}
+          <PhotoInput label="Before Photo" value={f.before_photo} name={f.before_name} testid="inst-before"
+            onChange={(v, n) => { set("before_photo", v); set("before_name", n); }} />
+          <PhotoInput label="After Photo" value={f.after_photo} name={f.after_name} testid="inst-after"
+            onChange={(v, n) => { set("after_photo", v); set("after_name", n); }} />
+          <PhotoInput label="Meter Photo" value={f.meter_photo} name={f.meter_name} testid="inst-meter"
+            onChange={(v, n) => { set("meter_photo", v); set("meter_name", n); }} />
+          {inp("remarks", "Remarks", { full: true })}
+        </div>
+        <div className="p-4 border-t border-border flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 h-10 rounded-lg border border-border text-sm">Cancel</button>
+          <button onClick={save} disabled={busy} className="px-4 h-10 rounded-lg bg-foreground text-background text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50">
+            {busy && <Loader2 className="w-4 h-4 animate-spin"/>} Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* --------- Gate Passes --------- */
+function GatePasses() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [dlg, setDlg] = useState(null);
+  const load = async () => {
+    setLoading(true);
+    try { setItems((await inventoryApi.listGatePasses({ page_size: 100 })).items); }
+    catch (e) { toast.error(formatApiError(e)); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="font-heading text-3xl sm:text-4xl font-black tracking-tight">Gate Pass</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Ship meters out. Serial validation blocks already-Issued/Installed/Damaged. Approved gate pass auto-issues the meters.</p>
+        </div>
+        <button onClick={() => setDlg({})} className="h-10 px-4 rounded-lg bg-foreground text-background text-sm font-semibold inline-flex items-center gap-1.5"><Plus className="w-4 h-4"/>New Gate Pass</button>
+      </div>
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/50 text-[10px] uppercase tracking-wider">
+            <tr><th className="text-left px-3 py-2">Number</th><th className="text-left">Date</th><th className="text-left">From→To</th><th className="text-left">Meters</th><th className="text-left">Vehicle</th><th className="text-left">Status</th></tr>
+          </thead>
+          <tbody>
+            {loading && <tr><td colSpan={6} className="text-center py-6"><Loader2 className="w-4 h-4 inline animate-spin"/></td></tr>}
+            {!loading && items.length === 0 && <tr><td colSpan={6} className="text-center py-6 text-sm text-muted-foreground">No gate passes</td></tr>}
+            {items.map(r => (
+              <tr key={r.id} className="border-t border-border hover:bg-muted/30">
+                <td className="px-3 py-1.5 font-mono text-xs font-semibold">{r.gate_pass_number}</td>
+                <td className="px-3 py-1.5 text-xs">{r.gate_pass_date}</td>
+                <td className="px-3 py-1.5 text-xs">{r.from_location} → {r.to_location}</td>
+                <td className="px-3 py-1.5 text-xs">{r.meter_serials?.length || 0}</td>
+                <td className="px-3 py-1.5 text-xs">{r.vehicle_number || "—"}</td>
+                <td className="px-3 py-1.5">
+                  <select value={r.status} onChange={async (e) => {
+                    try { await inventoryApi.updateGatePass(r.id, { status: e.target.value }); toast.success("Updated"); load(); }
+                    catch (er) { toast.error(formatApiError(er)); }
+                  }} className={`text-xs font-bold px-2 py-1 rounded-full border-0 ${STATUS_STYLE[r.status] || "bg-muted"}`}>
+                    {["Draft","Submitted","Approved","Rejected","Completed"].map(s => <option key={s}>{s}</option>)}
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {dlg && <GatePassDialog onClose={() => setDlg(null)} onSaved={() => { setDlg(null); load(); }} />}
+    </div>
+  );
+}
+
+function GatePassDialog({ onClose, onSaved }) {
+  const [f, setF] = useState({
+    gate_pass_number: "", gate_pass_date: new Date().toISOString().slice(0,10),
+    from_location: "", to_location: "", meter_serials: "",
+    vehicle_number: "", driver_name: "", driver_mobile: "", agency: "",
+    purpose: "", prepared_by: "", approved_by: "", status: "Submitted",
+    document: null, document_name: null, remarks: "",
+  });
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!f.gate_pass_number || !f.from_location || !f.to_location) return toast.error("Number, from + to are required");
+    setBusy(true);
+    try {
+      const serials = f.meter_serials.split(/[,\s\n]+/).map(s => s.trim()).filter(Boolean);
+      await inventoryApi.addGatePass({ ...f, meter_serials: serials });
+      toast.success("Gate pass created"); onSaved();
+    } catch (e) { toast.error(formatApiError(e)); }
+    finally { setBusy(false); }
+  };
+  const set = (k, v) => setF(s => ({ ...s, [k]: v }));
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-2">
+      <div className="w-full max-w-2xl bg-card border border-border rounded-2xl overflow-hidden max-h-[92vh] flex flex-col">
+        <div className="p-4 border-b border-border flex justify-between items-center">
+          <h3 className="font-heading text-lg font-bold">New Gate Pass</h3>
+          <button onClick={onClose}><X className="w-4 h-4"/></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {[
+            ["gate_pass_number", "GP Number *"],
+            ["gate_pass_date", "Date *", "date"],
+            ["from_location", "From *"],
+            ["to_location", "To *"],
+            ["vehicle_number", "Vehicle"],
+            ["driver_name", "Driver"],
+            ["driver_mobile", "Driver Mobile"],
+            ["agency", "Agency"],
+            ["purpose", "Purpose"],
+            ["prepared_by", "Prepared By"],
+            ["approved_by", "Approved By"],
+          ].map(([k, l, t]) => (
+            <div key={k}>
+              <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{l}</label>
+              <input type={t || "text"} value={f[k] || ""} onChange={e => set(k, e.target.value)}
+                className="mt-1 w-full h-10 px-3 rounded-lg bg-background border border-border text-sm" />
+            </div>
+          ))}
+          <div>
+            <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Status</label>
+            <select value={f.status} onChange={e => set("status", e.target.value)} className="mt-1 w-full h-10 px-3 rounded-lg bg-background border border-border text-sm">
+              {["Draft","Submitted","Approved","Rejected","Completed"].map(s => <option key={s}>{s}</option>)}
+            </select>
+          </div>
+          <div className="sm:col-span-2">
+            <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Meter Serials (comma or newline separated)</label>
+            <textarea rows={3} value={f.meter_serials} onChange={e => set("meter_serials", e.target.value)}
+              placeholder="SM-001, SM-002, SM-003"
+              className="mt-1 w-full px-3 py-2 rounded-lg bg-background border border-border text-sm font-mono" />
+            <p className="mt-1 text-[10px] text-muted-foreground">System will block serials that are already Issued / Installed / Damaged / Returned.</p>
+          </div>
+          <PhotoInput label="Gate Pass Document (PDF/Image)" value={f.document} name={f.document_name} testid="gp-doc"
+            onChange={(v, n) => { set("document", v); set("document_name", n); }} />
+          <div className="sm:col-span-2">
+            <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Remarks</label>
+            <input value={f.remarks} onChange={e => set("remarks", e.target.value)} className="mt-1 w-full h-10 px-3 rounded-lg bg-background border border-border text-sm" />
+          </div>
+        </div>
+        <div className="p-4 border-t border-border flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 h-10 rounded-lg border border-border text-sm">Cancel</button>
+          <button onClick={save} disabled={busy} className="px-4 h-10 rounded-lg bg-foreground text-background text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50">
+            {busy && <Loader2 className="w-4 h-4 animate-spin"/>} Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* --------- Cable Issues --------- */
+function CableIssues() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [dlg, setDlg] = useState(null);
+  const load = async () => {
+    setLoading(true);
+    try { setItems((await inventoryApi.listCableIssues({ page_size: 100 })).items); }
+    catch (e) { toast.error(formatApiError(e)); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="font-heading text-3xl sm:text-4xl font-black tracking-tight">Cable Issue</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Issue cable from a drum. Balance is auto-checked before save.</p>
+        </div>
+        <button onClick={() => setDlg({})} className="h-10 px-4 rounded-lg bg-foreground text-background text-sm font-semibold inline-flex items-center gap-1.5"><Plus className="w-4 h-4"/>New Issue</button>
+      </div>
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/50 text-[10px] uppercase tracking-wider">
+            <tr><th className="text-left px-3 py-2">Slip</th><th className="text-left">Date</th><th className="text-left">Drum</th><th className="text-left">Type / Size</th><th className="text-right">Quantity</th><th className="text-left">To</th></tr>
+          </thead>
+          <tbody>
+            {loading && <tr><td colSpan={6} className="text-center py-6"><Loader2 className="w-4 h-4 inline animate-spin"/></td></tr>}
+            {!loading && items.length === 0 && <tr><td colSpan={6} className="text-center py-6 text-sm text-muted-foreground">No cable issues yet</td></tr>}
+            {items.map(r => (
+              <tr key={r.id} className="border-t border-border hover:bg-muted/30">
+                <td className="px-3 py-1.5 font-mono text-xs">{r.issue_slip_number || "—"}</td>
+                <td className="px-3 py-1.5 text-xs">{r.issue_date}</td>
+                <td className="px-3 py-1.5 font-mono text-xs">{r.drum_number}</td>
+                <td className="px-3 py-1.5 text-xs">{r.cable_type} / {r.cable_size}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{r.quantity}</td>
+                <td className="px-3 py-1.5 text-xs">{r.agency || r.issued_to || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {dlg && <CableIssueDialog onClose={() => setDlg(null)} onSaved={() => { setDlg(null); load(); }} />}
+    </div>
+  );
+}
+
+function CableIssueDialog({ onClose, onSaved }) {
+  const [f, setF] = useState({
+    issue_date: new Date().toISOString().slice(0,10),
+    drum_number: "", cable_type: "", cable_size: "", quantity: 0,
+    issued_to: "", agency: "", work_order: "", vehicle_number: "",
+    issue_slip_number: "", document: null, document_name: null, remarks: "",
+  });
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!f.drum_number || !f.cable_type || !f.cable_size || !f.quantity) return toast.error("Drum, type, size, quantity required");
+    setBusy(true);
+    try {
+      await inventoryApi.addCableIssue({ ...f, quantity: Number(f.quantity), drum_number: f.drum_number.toUpperCase() });
+      toast.success("Cable issued"); onSaved();
+    } catch (e) { toast.error(formatApiError(e)); }
+    finally { setBusy(false); }
+  };
+  const set = (k, v) => setF(s => ({ ...s, [k]: v }));
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-2">
+      <div className="w-full max-w-2xl bg-card border border-border rounded-2xl overflow-hidden max-h-[92vh] flex flex-col">
+        <div className="p-4 border-b border-border flex justify-between items-center">
+          <h3 className="font-heading text-lg font-bold">Cable Issue Slip</h3>
+          <button onClick={onClose}><X className="w-4 h-4"/></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {[["issue_date","Date","date"],["issue_slip_number","Slip No"],["drum_number","Drum *"],["cable_type","Cable Type *"],["cable_size","Cable Size *"],["quantity","Quantity *","number"],["issued_to","Issued To"],["agency","Agency"],["work_order","Work Order"],["vehicle_number","Vehicle"]].map(([k,l,t])=>(
+            <div key={k}>
+              <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{l}</label>
+              <input type={t||"text"} value={f[k]||""} onChange={e=>set(k,e.target.value)} className="mt-1 w-full h-10 px-3 rounded-lg bg-background border border-border text-sm"/>
+            </div>
+          ))}
+          <PhotoInput label="Issue Slip Document" value={f.document} name={f.document_name} testid="ci-doc"
+            onChange={(v, n) => { set("document", v); set("document_name", n); }} />
+          <div className="sm:col-span-2">
+            <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Remarks</label>
+            <input value={f.remarks} onChange={e=>set("remarks",e.target.value)} className="mt-1 w-full h-10 px-3 rounded-lg bg-background border border-border text-sm"/>
+          </div>
+        </div>
+        <div className="p-4 border-t border-border flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 h-10 rounded-lg border border-border text-sm">Cancel</button>
+          <button onClick={save} disabled={busy} className="px-4 h-10 rounded-lg bg-foreground text-background text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50">
+            {busy && <Loader2 className="w-4 h-4 animate-spin"/>} Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* --------- BISignoffs --------- */
+function BISignoffs() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [dlg, setDlg] = useState(null);
+  const load = async () => {
+    setLoading(true);
+    try { setItems((await inventoryApi.listBISignoffs({ page_size: 100 })).items); }
+    catch (e) { toast.error(formatApiError(e)); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+  const setStatus = async (r, next) => {
+    try { await inventoryApi.updateBISignoff(r.id, { status: next }); toast.success("Updated"); load(); }
+    catch (e) { toast.error(formatApiError(e)); }
+  };
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="font-heading text-3xl sm:text-4xl font-black tracking-tight">Used Cable BISignoff</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Verification workflow. Verified records lock automatically and update the drum's Used quantity.</p>
+        </div>
+        <button onClick={() => setDlg({})} className="h-10 px-4 rounded-lg bg-foreground text-background text-sm font-semibold inline-flex items-center gap-1.5"><Plus className="w-4 h-4"/>New BISignoff</button>
+      </div>
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/50 text-[10px] uppercase tracking-wider">
+            <tr><th className="text-left px-3 py-2">Number</th><th className="text-left">Date</th><th className="text-left">Drum</th><th className="text-right">Used</th><th className="text-left">Consumer / Work</th><th className="text-left">Status</th></tr>
+          </thead>
+          <tbody>
+            {loading && <tr><td colSpan={6} className="text-center py-6"><Loader2 className="w-4 h-4 inline animate-spin"/></td></tr>}
+            {!loading && items.length === 0 && <tr><td colSpan={6} className="text-center py-6 text-sm text-muted-foreground">No BISignoffs yet</td></tr>}
+            {items.map(r => (
+              <tr key={r.id} className="border-t border-border hover:bg-muted/30">
+                <td className="px-3 py-1.5 font-mono text-xs font-semibold">{r.bisignoff_number}</td>
+                <td className="px-3 py-1.5 text-xs">{r.bisignoff_date}</td>
+                <td className="px-3 py-1.5 font-mono text-xs">{r.drum_number || "—"}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{r.used_qty || 0}</td>
+                <td className="px-3 py-1.5 text-xs">{r.consumer_reference || r.work_location || "—"}</td>
+                <td className="px-3 py-1.5">
+                  {r.status === "Verified" ? (
+                    <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_STYLE.Verified}`}>Verified 🔒</span>
+                  ) : (
+                    <select value={r.status} onChange={e => setStatus(r, e.target.value)} className={`text-xs font-bold px-2 py-1 rounded-full border-0 ${STATUS_STYLE[r.status] || "bg-muted"}`}>
+                      {["Pending","Submitted","Verified","Rejected"].map(s => <option key={s}>{s}</option>)}
+                    </select>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {dlg && <BISignoffDialog onClose={() => setDlg(null)} onSaved={() => { setDlg(null); load(); }} />}
+    </div>
+  );
+}
+
+function BISignoffDialog({ onClose, onSaved }) {
+  const [f, setF] = useState({
+    bisignoff_number: "", bisignoff_date: new Date().toISOString().slice(0,10),
+    consumer_reference: "", cable_type: "", cable_size: "", drum_number: "",
+    issued_qty: 0, used_qty: 0, balance_return: 0,
+    installer: "", agency: "", work_location: "", status: "Submitted",
+    document: null, document_name: null, remarks: "",
+  });
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!f.bisignoff_number || !f.cable_type || !f.cable_size) return toast.error("Number, type, size required");
+    setBusy(true);
+    try {
+      await inventoryApi.addBISignoff({ ...f,
+        issued_qty: Number(f.issued_qty), used_qty: Number(f.used_qty), balance_return: Number(f.balance_return),
+        drum_number: f.drum_number?.toUpperCase() });
+      toast.success("BISignoff created"); onSaved();
+    } catch (e) { toast.error(formatApiError(e)); }
+    finally { setBusy(false); }
+  };
+  const set = (k, v) => setF(s => ({ ...s, [k]: v }));
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-2">
+      <div className="w-full max-w-2xl bg-card border border-border rounded-2xl overflow-hidden max-h-[92vh] flex flex-col">
+        <div className="p-4 border-b border-border flex justify-between items-center">
+          <h3 className="font-heading text-lg font-bold">Used Cable BISignoff</h3>
+          <button onClick={onClose}><X className="w-4 h-4"/></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {[["bisignoff_number","BISignoff No *"],["bisignoff_date","Date","date"],["cable_type","Cable Type *"],["cable_size","Cable Size *"],["drum_number","Drum No"],["issued_qty","Issued Qty","number"],["used_qty","Used Qty","number"],["balance_return","Balance/Return","number"],["consumer_reference","Consumer / Work Ref"],["installer","Installer"],["agency","Agency"],["work_location","Work Location"]].map(([k,l,t])=>(
+            <div key={k}>
+              <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{l}</label>
+              <input type={t||"text"} value={f[k]||""} onChange={e=>set(k,e.target.value)} className="mt-1 w-full h-10 px-3 rounded-lg bg-background border border-border text-sm"/>
+            </div>
+          ))}
+          <PhotoInput label="BISignoff Document" value={f.document} name={f.document_name} testid="bi-doc"
+            onChange={(v, n) => { set("document", v); set("document_name", n); }} />
+          <div className="sm:col-span-2">
+            <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Remarks</label>
+            <input value={f.remarks} onChange={e=>set("remarks",e.target.value)} className="mt-1 w-full h-10 px-3 rounded-lg bg-background border border-border text-sm"/>
+          </div>
+        </div>
+        <div className="p-4 border-t border-border flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 h-10 rounded-lg border border-border text-sm">Cancel</button>
+          <button onClick={save} disabled={busy} className="px-4 h-10 rounded-lg bg-foreground text-background text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50">
+            {busy && <Loader2 className="w-4 h-4 animate-spin"/>} Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* --------- Cross-linked History (mini Session C) --------- */
+function CrossHistory() {
+  const [serial, setSerial] = useState("");
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const search = async () => {
+    if (!serial.trim()) return;
+    setLoading(true); setData(null);
+    try { setData(await inventoryApi.crossHistory(serial.trim().toUpperCase())); }
+    catch (e) { toast.error(formatApiError(e)); }
+    finally { setLoading(false); }
+  };
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="font-heading text-3xl sm:text-4xl font-black tracking-tight">Serial Lifecycle</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Type a smart meter serial to see the full journey: Receipt → Gate Pass → Installation → Old Meter → BISignoff → Verification.</p>
+      </div>
+      <div className="rounded-2xl border border-border bg-card p-3 flex gap-2">
+        <div className="flex-1 relative">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"/>
+          <input value={serial} onChange={e => setSerial(e.target.value)} onKeyDown={e => e.key === "Enter" && search()}
+            placeholder="Enter serial number, e.g. SM-LC-100"
+            className="w-full h-11 pl-9 pr-3 rounded-lg bg-background border border-border text-sm font-mono"/>
+        </div>
+        <button onClick={search} className="h-11 px-4 rounded-lg bg-foreground text-background text-sm font-semibold">Search</button>
+      </div>
+      {loading && <div className="text-sm text-muted-foreground">Loading…</div>}
+      {data && (
+        <div className="space-y-3">
+          <StageCard title="1 · Meter Stock" state={data.meter ? "done" : null}>
+            <Row label="Serial" value={data.meter.serial_number} mono />
+            <Row label="Make / Model" value={`${data.meter.meter_make || "—"} · ${data.meter.meter_model || "—"}`}/>
+            <Row label="Status" value={data.meter.status} badge />
+            <Row label="Division" value={data.meter.division}/>
+          </StageCard>
+          <StageCard title="2 · Gate Pass" state={data.gate_pass ? "done" : "skip"}>
+            {data.gate_pass ? (<>
+              <Row label="GP No" value={data.gate_pass.gate_pass_number} mono />
+              <Row label="Date" value={data.gate_pass.gate_pass_date}/>
+              <Row label="From → To" value={`${data.gate_pass.from_location} → ${data.gate_pass.to_location}`}/>
+              <Row label="Status" value={data.gate_pass.status} badge />
+            </>) : <div className="text-xs text-muted-foreground">No gate pass yet</div>}
+          </StageCard>
+          <StageCard title="3 · Installation" state={data.installation ? "done" : "skip"}>
+            {data.installation ? (<>
+              <Row label="Consumer" value={`${data.installation.consumer_name} (${data.installation.consumer_number})`}/>
+              <Row label="Date" value={data.installation.installation_date}/>
+              <Row label="Installer" value={data.installation.installer || data.installation.agency}/>
+              <Row label="Status" value={data.installation.status} badge />
+              {data.installation.after_photo && (
+                <div className="mt-2">
+                  <div className="text-[10px] uppercase text-muted-foreground font-bold">After Photo</div>
+                  <img src={data.installation.after_photo} className="mt-1 max-h-40 rounded-lg border border-border"/>
+                </div>
+              )}
+            </>) : <div className="text-xs text-muted-foreground">Not yet installed</div>}
+          </StageCard>
+          <StageCard title="4 · Old Meter Removed" state={data.old_meter ? "done" : "skip"}>
+            {data.old_meter ? (<>
+              <Row label="Serial" value={data.old_meter.serial_number} mono />
+              <Row label="Condition" value={data.old_meter.condition} badge />
+              <Row label="Deposit" value={data.old_meter.deposit_status} badge />
+            </>) : <div className="text-xs text-muted-foreground">No old meter linked</div>}
+          </StageCard>
+          <StageCard title="5 · BISignoff Verification" state={data.bisignoff ? (data.bisignoff.status === "Verified" ? "done" : "pending") : "skip"}>
+            {data.bisignoff ? (<>
+              <Row label="Number" value={data.bisignoff.bisignoff_number} mono/>
+              <Row label="Used Qty" value={data.bisignoff.used_qty}/>
+              <Row label="Status" value={data.bisignoff.status} badge/>
+            </>) : <div className="text-xs text-muted-foreground">No BISignoff yet</div>}
+          </StageCard>
+        </div>
+      )}
+    </div>
+  );
+}
+function StageCard({ title, state, children }) {
+  const dot = state === "done" ? "bg-emerald-500" : state === "pending" ? "bg-amber-500" : "bg-muted";
+  return (
+    <div className="rounded-2xl border border-border bg-card overflow-hidden">
+      <div className="px-4 py-2 border-b border-border flex items-center gap-2">
+        <span className={`w-2 h-2 rounded-full ${dot}`}/>
+        <div className="font-heading font-bold text-sm">{title}</div>
+      </div>
+      <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-2">{children}</div>
+    </div>
+  );
+}
+function Row({ label, value, badge, mono }) {
+  if (!value && value !== 0) value = "—";
+  return (
+    <div>
+      <div className="text-[10px] uppercase text-muted-foreground font-bold">{label}</div>
+      {badge ? (
+        <span className={`inline-flex mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_STYLE[value] || "bg-muted"}`}>{value}</span>
+      ) : (
+        <div className={`mt-0.5 text-sm ${mono ? "font-mono" : ""} font-medium`}>{value}</div>
+      )}
+    </div>
+  );
+}
+
+
+/* --------- Reports (Excel exports) --------- */
+function Reports() {
+  const [reports, setReports] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [downloading, setDownloading] = useState(null);
+
+  useEffect(() => {
+    inventoryApi.reportsSummary().then(d => setReports(d.reports)).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const download = async (kind) => {
+    setDownloading(kind);
+    try {
+      const res = await import("@/lib/adminApi").then(m => m.adminHttp.get(inventoryApi.reportXlsxUrl(kind), { responseType: "blob" }));
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `pps-inventory-${kind}-${new Date().toISOString().slice(0,10)}.xlsx`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      toast.success(`Downloaded ${kind}`);
+    } catch (e) { toast.error(formatApiError(e)); }
+    finally { setDownloading(null); }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="font-heading text-3xl sm:text-4xl font-black tracking-tight">Reports</h1>
+        <p className="mt-1 text-sm text-muted-foreground">One-click Excel exports of every inventory register. Each file is professionally formatted with branded headers, frozen top row, and auto-sized columns.</p>
+      </div>
+      {loading && <div className="text-sm text-muted-foreground">Loading…</div>}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {reports.map(r => (
+          <div key={r.kind} className="rounded-2xl border border-border bg-card p-4">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="font-heading font-bold">{r.name}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">{r.rows.toLocaleString()} rows</div>
+                {r.last_updated && (
+                  <div className="text-[10px] text-muted-foreground mt-1">Last: {new Date(r.last_updated).toLocaleString()}</div>
+                )}
+              </div>
+              <BarChart2 className="w-4 h-4 text-muted-foreground" />
+            </div>
+            <button
+              data-testid={`report-download-${r.kind}`}
+              onClick={() => download(r.kind)}
+              disabled={downloading === r.kind || r.rows === 0}
+              className="mt-3 w-full h-9 rounded-lg bg-foreground text-background text-xs font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-40"
+            >
+              {downloading === r.kind ? <Loader2 className="w-3.5 h-3.5 animate-spin"/> : <Download className="w-3.5 h-3.5"/>}
+              {r.rows === 0 ? "No data" : "Download Excel"}
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="rounded-2xl border border-border bg-card p-3 text-xs text-muted-foreground">
+        <strong>Tip:</strong> Downloads include every non-deleted row. To restrict by date or filter, open the source tab first (Smart Meter / Old Meter / etc.), then export.
+      </div>
+    </div>
+  );
+}
+

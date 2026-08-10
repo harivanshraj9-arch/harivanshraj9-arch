@@ -51,6 +51,25 @@ export const inventoryApi = {
   },
 
   ledger: async (params = {}) => (await adminHttp.get("/inventory/ledger", { params: q(params) })).data,
+  reportsSummary: async () => (await adminHttp.get("/inventory/reports/summary")).data,
+  reportXlsxUrl: (kind) => `/inventory/reports/${kind}.xlsx`,
+
+  // Session B
+  listInstallations: async (params = {}) => (await adminHttp.get("/inventory/installations", { params: q(params) })).data,
+  addInstallation: async (payload) => (await adminHttp.post("/inventory/installations", payload)).data,
+
+  listGatePasses: async (params = {}) => (await adminHttp.get("/inventory/gate-passes", { params: q(params) })).data,
+  addGatePass: async (payload) => (await adminHttp.post("/inventory/gate-passes", payload)).data,
+  updateGatePass: async (id, patch) => (await adminHttp.patch(`/inventory/gate-passes/${id}`, patch)).data,
+
+  listCableIssues: async (params = {}) => (await adminHttp.get("/inventory/cable-issues", { params: q(params) })).data,
+  addCableIssue: async (payload) => (await adminHttp.post("/inventory/cable-issues", payload)).data,
+
+  listBISignoffs: async (params = {}) => (await adminHttp.get("/inventory/bisignoffs", { params: q(params) })).data,
+  addBISignoff: async (payload) => (await adminHttp.post("/inventory/bisignoffs", payload)).data,
+  updateBISignoff: async (id, patch) => (await adminHttp.patch(`/inventory/bisignoffs/${id}`, patch)).data,
+
+  crossHistory: async (serial) => (await adminHttp.get(`/inventory/history/serial/${encodeURIComponent(serial)}`)).data,
 };
 
 export const MASTER_TYPES = [

@@ -635,6 +635,415 @@ async def get_ledger(
     return {"items": docs}
 
 
+# ================================================================
+#            SESSION B — TRANSACTIONS (lifecycle)
+# ================================================================
+# 4 new collections: installations, gate_passes, cable_issues, bisignoffs
+# Each mutation runs "auto-movement" that updates stock status.
+# Documents (photos / PDFs) are stored as base64 data URLs on the doc.
+
+
+class InstallationIn(BaseModel):
+    installation_date: str
+    division: Optional[str] = None
+    sub_division: Optional[str] = None
+    sdo: Optional[str] = None
+    consumer_name: str
+    consumer_number: str
+    address: Optional[str] = None
+    old_meter_serial: Optional[str] = None
+    new_meter_serial: str
+    installer: Optional[str] = None
+    agency: Optional[str] = None
+    mobile_number: Optional[str] = None
+    status: Literal["Pending", "Installed", "Rejected", "Revisit Required", "Completed"] = "Installed"
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    before_photo: Optional[str] = None       # base64 data URL
+    after_photo: Optional[str] = None
+    meter_photo: Optional[str] = None
+    remarks: Optional[str] = None
+
+
+@inventory_router.post("/installations")
+async def add_installation(payload: InstallationIn, user: dict = Depends(dep_admin)):
+    new_sn = payload.new_meter_serial.strip().upper()
+    meter = await _db.inv_smart_meters.find_one({"serial_number": new_sn,
+                                                   "deleted_at": {"$exists": False}})
+    if not meter:
+        raise HTTPException(400, f"Smart meter {new_sn} not in stock")
+    if meter["status"] in ("Installed", "Damaged", "Returned"):
+        raise HTTPException(400, f"Meter {new_sn} is {meter['status']} — not installable")
+
+    doc = {"id": str(uuid.uuid4()), **payload.model_dump(),
+           "new_meter_serial": new_sn,
+           "old_meter_serial": (payload.old_meter_serial or "").strip().upper() or None,
+           "created_at": _now(), "created_by": user["email"]}
+    await _db.inv_installations.insert_one(doc)
+
+    # Auto-movement: set smart meter to Installed
+    await _db.inv_smart_meters.update_one({"id": meter["id"]},
+        {"$set": {"status": "Installed", "installed_at": _now(),
+                  "installation_id": doc["id"]}})
+    await _ledger(user["email"], "smart_meter", meter["id"], "installed",
+                   {"status": meter["status"]}, {"status": "Installed"},
+                   f"Installed at consumer {payload.consumer_number} ({payload.consumer_name})")
+
+    # Auto-movement: if old serial provided, add it to old-meter stock (Pending deposit)
+    if doc["old_meter_serial"]:
+        exists = await _db.inv_old_meters.find_one({"serial_number": doc["old_meter_serial"]})
+        if not exists:
+            om = {"id": str(uuid.uuid4()), "serial_number": doc["old_meter_serial"],
+                   "consumer_number": payload.consumer_number,
+                   "consumer_name": payload.consumer_name,
+                   "removal_date": payload.installation_date,
+                   "division": payload.division, "sub_division": payload.sub_division,
+                   "sdo": payload.sdo, "installer": payload.installer or payload.agency,
+                   "condition": "Good", "deposit_status": "Pending",
+                   "installation_id": doc["id"],
+                   "created_at": _now(), "created_by": user["email"]}
+            await _db.inv_old_meters.insert_one(om)
+            await _ledger(user["email"], "old_meter", om["id"], "removed",
+                           None, {"serial": om["serial_number"]},
+                           f"Auto-removed via installation {doc['id']}")
+
+    await _ledger(user["email"], "installation", doc["id"], "created", None,
+                   {"consumer": payload.consumer_number, "new_serial": new_sn})
+    return _clean(doc)
+
+
+@inventory_router.get("/installations")
+async def list_installations(
+    q: Optional[str] = None, status: Optional[str] = None,
+    division: Optional[str] = None,
+    page: int = 1, page_size: int = Query(25, le=200),
+    user: dict = Depends(dep_current),
+):
+    query = {"deleted_at": {"$exists": False}}
+    if status: query["status"] = status
+    if division: query["division"] = division
+    if q:
+        rex = {"$regex": q, "$options": "i"}
+        query["$or"] = [{"consumer_number": rex}, {"consumer_name": rex},
+                        {"new_meter_serial": rex}, {"old_meter_serial": rex},
+                        {"installer": rex}, {"mobile_number": rex}]
+    skip = (max(1, page) - 1) * page_size
+    total = await _db.inv_installations.count_documents(query)
+    docs = await _db.inv_installations.find(query, {"_id": 0}).sort("installation_date", -1).skip(skip).limit(page_size).to_list(page_size)
+    return {"items": docs, "total": total, "page": page, "page_size": page_size}
+
+
+@inventory_router.get("/installations/{iid}")
+async def get_installation(iid: str, user: dict = Depends(dep_current)):
+    doc = await _db.inv_installations.find_one({"id": iid}, {"_id": 0})
+    if not doc: raise HTTPException(404, "Not found")
+    return doc
+
+
+# ---------- GATE PASS ----------
+class GatePassIn(BaseModel):
+    gate_pass_number: str
+    gate_pass_date: str
+    division: Optional[str] = None
+    sub_division: Optional[str] = None
+    sdo: Optional[str] = None
+    from_location: str
+    to_location: str
+    meter_serials: List[str] = []
+    vehicle_number: Optional[str] = None
+    driver_name: Optional[str] = None
+    driver_mobile: Optional[str] = None
+    agency: Optional[str] = None
+    purpose: Optional[str] = None
+    prepared_by: Optional[str] = None
+    approved_by: Optional[str] = None
+    status: Literal["Draft", "Submitted", "Approved", "Rejected", "Completed"] = "Draft"
+    document: Optional[str] = None            # base64 PDF or image
+    document_name: Optional[str] = None
+    remarks: Optional[str] = None
+
+
+@inventory_router.post("/gate-passes")
+async def add_gate_pass(payload: GatePassIn, user: dict = Depends(dep_admin)):
+    if not payload.gate_pass_number.strip():
+        raise HTTPException(400, "Gate pass number required")
+    if await _db.inv_gate_passes.find_one({"gate_pass_number": payload.gate_pass_number.strip(),
+                                             "deleted_at": {"$exists": False}}):
+        raise HTTPException(409, "Duplicate gate pass number")
+
+    # Serial number validation — must exist and NOT be Issued/Installed/Damaged/Returned
+    serials = [s.strip().upper() for s in payload.meter_serials if s and s.strip()]
+    invalid = []
+    for sn in serials:
+        m = await _db.inv_smart_meters.find_one({"serial_number": sn,
+                                                   "deleted_at": {"$exists": False}})
+        if not m:
+            invalid.append(f"{sn}: not in stock")
+        elif m["status"] in ("Issued", "Installed", "Damaged", "Returned"):
+            invalid.append(f"{sn}: {m['status']}")
+    if invalid:
+        raise HTTPException(400, "Serial validation failed: " + "; ".join(invalid))
+
+    doc = {"id": str(uuid.uuid4()), **payload.model_dump(),
+           "meter_serials": serials,
+           "created_at": _now(), "created_by": user["email"]}
+    await _db.inv_gate_passes.insert_one(doc)
+
+    # Auto-movement: on Approved, mark meters Issued
+    if payload.status == "Approved" and serials:
+        await _db.inv_smart_meters.update_many(
+            {"serial_number": {"$in": serials}},
+            {"$set": {"status": "Issued", "gate_pass_id": doc["id"], "issued_at": _now()}}
+        )
+        for sn in serials:
+            m = await _db.inv_smart_meters.find_one({"serial_number": sn}, {"id": 1})
+            if m:
+                await _ledger(user["email"], "smart_meter", m["id"], "issued",
+                               None, {"status": "Issued", "gate_pass": payload.gate_pass_number})
+
+    await _ledger(user["email"], "gate_pass", doc["id"], "created", None,
+                   {"number": payload.gate_pass_number, "meters": len(serials)})
+    return _clean(doc)
+
+
+@inventory_router.patch("/gate-passes/{gid}")
+async def update_gate_pass(gid: str, patch: Dict[str, Any], user: dict = Depends(dep_admin)):
+    before = await _db.inv_gate_passes.find_one({"id": gid}, {"_id": 0})
+    if not before: raise HTTPException(404, "Not found")
+    updates = {k: v for k, v in patch.items() if k not in ("id", "_id", "created_at", "created_by")}
+    updates["updated_at"] = _now()
+    await _db.inv_gate_passes.update_one({"id": gid}, {"$set": updates})
+    after = await _db.inv_gate_passes.find_one({"id": gid}, {"_id": 0})
+    # If status transitioned to Approved, issue the meters
+    if before.get("status") != "Approved" and after.get("status") == "Approved":
+        serials = after.get("meter_serials", [])
+        if serials:
+            await _db.inv_smart_meters.update_many(
+                {"serial_number": {"$in": serials}, "status": "Available"},
+                {"$set": {"status": "Issued", "gate_pass_id": gid, "issued_at": _now()}})
+            for sn in serials:
+                m = await _db.inv_smart_meters.find_one({"serial_number": sn}, {"id": 1})
+                if m:
+                    await _ledger(user["email"], "smart_meter", m["id"], "issued",
+                                   None, {"status": "Issued"}, f"GP {after['gate_pass_number']}")
+    await _ledger(user["email"], "gate_pass", gid, "updated", before, after)
+    return after
+
+
+@inventory_router.get("/gate-passes")
+async def list_gate_passes(
+    q: Optional[str] = None, status: Optional[str] = None,
+    page: int = 1, page_size: int = Query(25, le=200),
+    user: dict = Depends(dep_current),
+):
+    query = {"deleted_at": {"$exists": False}}
+    if status: query["status"] = status
+    if q:
+        rex = {"$regex": q, "$options": "i"}
+        query["$or"] = [{"gate_pass_number": rex}, {"vehicle_number": rex},
+                        {"agency": rex}, {"to_location": rex}]
+    skip = (max(1, page) - 1) * page_size
+    total = await _db.inv_gate_passes.count_documents(query)
+    docs = await _db.inv_gate_passes.find(query, {"_id": 0}).sort("gate_pass_date", -1).skip(skip).limit(page_size).to_list(page_size)
+    return {"items": docs, "total": total, "page": page, "page_size": page_size}
+
+
+@inventory_router.get("/gate-passes/{gid}")
+async def get_gate_pass(gid: str, user: dict = Depends(dep_current)):
+    doc = await _db.inv_gate_passes.find_one({"id": gid}, {"_id": 0})
+    if not doc: raise HTTPException(404, "Not found")
+    return doc
+
+
+# ---------- CABLE ISSUE ----------
+class CableIssueIn(BaseModel):
+    issue_date: str
+    division: Optional[str] = None
+    sub_division: Optional[str] = None
+    sdo: Optional[str] = None
+    cable_type: str
+    cable_size: str
+    drum_number: str
+    quantity: float
+    issued_to: Optional[str] = None
+    agency: Optional[str] = None
+    work_order: Optional[str] = None
+    vehicle_number: Optional[str] = None
+    issue_slip_number: Optional[str] = None
+    document: Optional[str] = None
+    document_name: Optional[str] = None
+    remarks: Optional[str] = None
+
+
+@inventory_router.post("/cable-issues")
+async def add_cable_issue(payload: CableIssueIn, user: dict = Depends(dep_admin)):
+    drum = payload.drum_number.strip().upper()
+    cable = await _db.inv_cables.find_one({"drum_number": drum, "deleted_at": {"$exists": False}})
+    if not cable:
+        raise HTTPException(400, f"Drum {drum} not in stock")
+    balance = _cable_balance(cable)
+    if payload.quantity <= 0:
+        raise HTTPException(400, "Quantity must be positive")
+    if payload.quantity > balance + 0.001:
+        raise HTTPException(400, f"Only {balance} available on drum {drum}")
+
+    doc = {"id": str(uuid.uuid4()), **payload.model_dump(),
+           "drum_number": drum, "cable_id": cable["id"],
+           "created_at": _now(), "created_by": user["email"]}
+    await _db.inv_cable_issues.insert_one(doc)
+
+    # Auto-movement: increment issued_qty on cable
+    new_issued = (cable.get("issued_qty") or 0) + payload.quantity
+    new_bal = _cable_balance({**cable, "issued_qty": new_issued})
+    await _db.inv_cables.update_one({"id": cable["id"]},
+        {"$set": {"issued_qty": new_issued, "balance_qty": new_bal}})
+    await _ledger(user["email"], "cable", cable["id"], "issued",
+                   {"balance": balance}, {"balance": new_bal},
+                   f"Issue {payload.quantity} {cable.get('unit','')} to {payload.agency or payload.issued_to}")
+    await _ledger(user["email"], "cable_issue", doc["id"], "created", None,
+                   {"drum": drum, "qty": payload.quantity})
+    return _clean(doc)
+
+
+@inventory_router.get("/cable-issues")
+async def list_cable_issues(
+    q: Optional[str] = None, page: int = 1, page_size: int = Query(25, le=200),
+    user: dict = Depends(dep_current),
+):
+    query = {"deleted_at": {"$exists": False}}
+    if q:
+        rex = {"$regex": q, "$options": "i"}
+        query["$or"] = [{"drum_number": rex}, {"issue_slip_number": rex},
+                        {"agency": rex}, {"work_order": rex}]
+    skip = (max(1, page) - 1) * page_size
+    total = await _db.inv_cable_issues.count_documents(query)
+    docs = await _db.inv_cable_issues.find(query, {"_id": 0}).sort("issue_date", -1).skip(skip).limit(page_size).to_list(page_size)
+    return {"items": docs, "total": total, "page": page, "page_size": page_size}
+
+
+# ---------- BISIGNOFF (Used Cable) ----------
+class BISignoffIn(BaseModel):
+    bisignoff_number: str
+    bisignoff_date: str
+    division: Optional[str] = None
+    sub_division: Optional[str] = None
+    sdo: Optional[str] = None
+    consumer_reference: Optional[str] = None
+    cable_type: str
+    cable_size: str
+    drum_number: Optional[str] = None
+    issued_qty: float = 0
+    used_qty: float = 0
+    balance_return: float = 0
+    installer: Optional[str] = None
+    agency: Optional[str] = None
+    work_location: Optional[str] = None
+    installation_id: Optional[str] = None
+    status: Literal["Pending", "Submitted", "Verified", "Rejected"] = "Submitted"
+    document: Optional[str] = None
+    document_name: Optional[str] = None
+    remarks: Optional[str] = None
+
+
+@inventory_router.post("/bisignoffs")
+async def add_bisignoff(payload: BISignoffIn, user: dict = Depends(dep_admin)):
+    if await _db.inv_bisignoffs.find_one({"bisignoff_number": payload.bisignoff_number.strip(),
+                                            "deleted_at": {"$exists": False}}):
+        raise HTTPException(409, "Duplicate BISignoff number")
+    doc = {"id": str(uuid.uuid4()), **payload.model_dump(),
+           "created_at": _now(), "created_by": user["email"]}
+    await _db.inv_bisignoffs.insert_one(doc)
+    await _ledger(user["email"], "bisignoff", doc["id"], "created", None,
+                   {"number": payload.bisignoff_number})
+    return _clean(doc)
+
+
+@inventory_router.patch("/bisignoffs/{bid}")
+async def update_bisignoff(bid: str, patch: Dict[str, Any], user: dict = Depends(dep_admin)):
+    before = await _db.inv_bisignoffs.find_one({"id": bid}, {"_id": 0})
+    if not before: raise HTTPException(404, "Not found")
+    # Verified is locked
+    if before.get("status") == "Verified" and patch.get("status") != "Verified":
+        raise HTTPException(400, "Verified BISignoff cannot be modified")
+    if before.get("status") == "Verified":
+        allowed_after_verify = {"remarks"}
+        patch = {k: v for k, v in patch.items() if k in allowed_after_verify}
+        if not patch:
+            raise HTTPException(400, "Verified BISignoff is locked")
+    updates = {k: v for k, v in patch.items() if k not in ("id", "_id", "created_at", "created_by")}
+    if patch.get("status") == "Verified":
+        updates["verified_by"] = user["email"]
+        updates["verified_at"] = _now()
+    updates["updated_at"] = _now()
+    await _db.inv_bisignoffs.update_one({"id": bid}, {"$set": updates})
+    after = await _db.inv_bisignoffs.find_one({"id": bid}, {"_id": 0})
+
+    # Auto-movement: on Verified, update used_qty on cable drum
+    if before.get("status") != "Verified" and after.get("status") == "Verified" and after.get("drum_number"):
+        drum = after["drum_number"].strip().upper()
+        cable = await _db.inv_cables.find_one({"drum_number": drum})
+        if cable and after.get("used_qty"):
+            new_used = (cable.get("used_qty") or 0) + float(after["used_qty"])
+            await _db.inv_cables.update_one({"id": cable["id"]},
+                {"$set": {"used_qty": new_used,
+                          "balance_qty": _cable_balance({**cable, "used_qty": new_used})}})
+            await _ledger(user["email"], "cable", cable["id"], "used",
+                           None, {"used_qty": new_used},
+                           f"BISignoff {after['bisignoff_number']} verified")
+
+    await _ledger(user["email"], "bisignoff", bid, "updated", before, after)
+    return after
+
+
+@inventory_router.get("/bisignoffs")
+async def list_bisignoffs(
+    q: Optional[str] = None, status: Optional[str] = None,
+    page: int = 1, page_size: int = Query(25, le=200),
+    user: dict = Depends(dep_current),
+):
+    query = {"deleted_at": {"$exists": False}}
+    if status: query["status"] = status
+    if q:
+        rex = {"$regex": q, "$options": "i"}
+        query["$or"] = [{"bisignoff_number": rex}, {"drum_number": rex},
+                        {"consumer_reference": rex}, {"work_location": rex}]
+    skip = (max(1, page) - 1) * page_size
+    total = await _db.inv_bisignoffs.count_documents(query)
+    docs = await _db.inv_bisignoffs.find(query, {"_id": 0}).sort("bisignoff_date", -1).skip(skip).limit(page_size).to_list(page_size)
+    return {"items": docs, "total": total, "page": page, "page_size": page_size}
+
+
+# ---------- CROSS-LINKED HISTORY (mini Session C) ----------
+@inventory_router.get("/history/serial/{sn}")
+async def cross_history(sn: str, user: dict = Depends(dep_current)):
+    """Return the FULL cross-linked lifecycle of a smart meter serial number."""
+    sn = sn.strip().upper()
+    meter = await _db.inv_smart_meters.find_one({"serial_number": sn}, {"_id": 0})
+    if not meter: raise HTTPException(404, "Serial not found in stock")
+
+    installation = await _db.inv_installations.find_one({"new_meter_serial": sn}, {"_id": 0})
+    old_meter = None
+    if installation and installation.get("old_meter_serial"):
+        old_meter = await _db.inv_old_meters.find_one({"serial_number": installation["old_meter_serial"]}, {"_id": 0})
+
+    gate_pass = None
+    if meter.get("gate_pass_id"):
+        gate_pass = await _db.inv_gate_passes.find_one({"id": meter["gate_pass_id"]}, {"_id": 0})
+
+    bisignoff = None
+    if installation:
+        bisignoff = await _db.inv_bisignoffs.find_one({"installation_id": installation["id"]}, {"_id": 0})
+
+    ledger = await _db.inv_ledger.find({"entity": "smart_meter", "entity_id": meter["id"]},
+                                         {"_id": 0}).sort("timestamp", 1).to_list(200)
+
+    return {
+        "serial": sn, "meter": meter, "gate_pass": gate_pass,
+        "installation": installation, "old_meter": old_meter,
+        "bisignoff": bisignoff, "ledger": ledger,
+    }
+
+
 async def ensure_inventory_indexes(db):
     await db.inv_master.create_index([("type", 1), ("name", 1)], unique=False)
     await db.inv_smart_meters.create_index("serial_number", unique=False)
@@ -645,6 +1054,113 @@ async def ensure_inventory_indexes(db):
     await db.inv_cables.create_index("drum_number")
     await db.inv_ledger.create_index([("timestamp", -1)])
     await db.inv_ledger.create_index([("entity", 1), ("entity_id", 1)])
+    await db.inv_installations.create_index("new_meter_serial")
+    await db.inv_installations.create_index("consumer_number")
+    await db.inv_gate_passes.create_index("gate_pass_number")
+    await db.inv_gate_passes.create_index("status")
+    await db.inv_cable_issues.create_index("drum_number")
+    await db.inv_bisignoffs.create_index("bisignoff_number")
+    await db.inv_bisignoffs.create_index("status")
+
+
+# ================================================================
+#            SESSION C — EXCEL EXPORTS (per collection)
+# ================================================================
+from fastapi.responses import StreamingResponse
+
+REPORT_MAP = {
+    "smart-meters": ("inv_smart_meters", "Smart Meters",
+                      ["serial_number", "meter_make", "meter_model", "meter_type", "rating",
+                       "batch_number", "purchase_date", "received_qty", "status",
+                       "division", "sub_division", "sdo", "store_location", "vendor",
+                       "gate_pass_id", "installation_id", "created_at", "created_by", "remarks"]),
+    "old-meters": ("inv_old_meters", "Old Meters",
+                    ["serial_number", "consumer_number", "consumer_name", "meter_make",
+                     "meter_model", "removal_date", "condition", "deposit_status",
+                     "deposit_date", "division", "sub_division", "sdo", "installer",
+                     "store_location", "created_at", "remarks"]),
+    "cables": ("inv_cables", "Cables",
+                ["drum_number", "cable_type", "cable_size", "cable_spec", "make",
+                 "batch_number", "unit", "opening_stock", "received_qty", "issued_qty",
+                 "used_qty", "returned_qty", "damaged_qty", "balance_qty",
+                 "division", "sub_division", "sdo", "store_location", "receipt_date", "remarks"]),
+    "installations": ("inv_installations", "Installations",
+                       ["installation_date", "consumer_name", "consumer_number", "address",
+                        "new_meter_serial", "old_meter_serial", "division", "sub_division",
+                        "sdo", "installer", "agency", "mobile_number", "status",
+                        "latitude", "longitude", "created_by", "remarks"]),
+    "gate-passes": ("inv_gate_passes", "Gate Passes",
+                     ["gate_pass_number", "gate_pass_date", "from_location", "to_location",
+                      "vehicle_number", "driver_name", "driver_mobile", "agency", "purpose",
+                      "prepared_by", "approved_by", "status", "meter_count", "created_by"]),
+    "cable-issues": ("inv_cable_issues", "Cable Issues",
+                      ["issue_date", "issue_slip_number", "drum_number", "cable_type",
+                       "cable_size", "quantity", "issued_to", "agency", "work_order",
+                       "vehicle_number", "created_by", "remarks"]),
+    "bisignoffs": ("inv_bisignoffs", "BISignoffs",
+                    ["bisignoff_number", "bisignoff_date", "consumer_reference",
+                     "cable_type", "cable_size", "drum_number", "issued_qty", "used_qty",
+                     "balance_return", "installer", "agency", "work_location", "status",
+                     "verified_by", "verified_at", "created_by", "remarks"]),
+    "ledger": ("inv_ledger", "Audit Trail",
+                ["timestamp", "entity", "entity_id", "action", "actor", "detail"]),
+}
+
+
+@inventory_router.get("/reports/{kind}.xlsx")
+async def export_xlsx(kind: str, user: dict = Depends(dep_current)):
+    if kind not in REPORT_MAP:
+        raise HTTPException(400, f"Unknown report kind. Options: {sorted(REPORT_MAP)}")
+    coll_name, sheet_name, cols = REPORT_MAP[kind]
+    coll = getattr(_db, coll_name)
+    query = {} if coll_name == "inv_ledger" else {"deleted_at": {"$exists": False}}
+    sort_field = "timestamp" if coll_name == "inv_ledger" else "created_at"
+    docs = await coll.find(query, {"_id": 0}).sort(sort_field, -1).to_list(20000)
+
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = sheet_name[:31]
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="0B1E3F", end_color="0B1E3F", fill_type="solid")
+    for i, c in enumerate(cols, start=1):
+        cell = ws.cell(row=1, column=i, value=c.replace("_", " ").upper())
+        cell.font = header_font; cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="left", vertical="center")
+    for r_idx, d in enumerate(docs, start=2):
+        for c_idx, c in enumerate(cols, start=1):
+            v = d.get(c)
+            if c == "meter_count":
+                v = len(d.get("meter_serials") or [])
+            if isinstance(v, (dict, list)):
+                v = str(v)[:200]
+            ws.cell(row=r_idx, column=c_idx, value=v)
+    for col_cells in ws.columns:
+        length = max((len(str(cell.value)) if cell.value is not None else 0) for cell in col_cells)
+        ws.column_dimensions[col_cells[0].column_letter].width = min(max(length + 2, 12), 40)
+    ws.freeze_panes = "A2"
+
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    filename = f"pps-inventory-{kind}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}.xlsx"
+    return StreamingResponse(buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@inventory_router.get("/reports/summary")
+async def report_summary(user: dict = Depends(dep_current)):
+    out = []
+    for kind, (coll_name, sheet_name, _) in REPORT_MAP.items():
+        coll = getattr(_db, coll_name)
+        query = {} if coll_name == "inv_ledger" else {"deleted_at": {"$exists": False}}
+        total = await coll.count_documents(query)
+        sort_field = "timestamp" if coll_name == "inv_ledger" else "created_at"
+        latest = await coll.find(query, {"_id": 0}).sort(sort_field, -1).limit(1).to_list(1)
+        latest_ts = None
+        if latest:
+            latest_ts = latest[0].get("timestamp") or latest[0].get("created_at")
+        out.append({"kind": kind, "name": sheet_name, "rows": total, "last_updated": latest_ts})
+    return {"reports": out}
 
 
 async def seed_inventory_masters(db):
