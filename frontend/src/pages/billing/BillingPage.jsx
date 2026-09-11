@@ -464,22 +464,146 @@ const PAYMENT_STYLES = {
   Overdue: "bg-[hsl(var(--destructive))]/10 text-[hsl(var(--destructive))]",
 };
 
+const SOURCE_STYLES = {
+  wcc: "bg-emerald-500/10 text-emerald-700",
+  manual: "bg-slate-500/10 text-slate-700",
+  historical: "bg-amber-500/15 text-amber-700",
+};
+
+function FilterField({ label, children }) {
+  return (
+    <div className="flex flex-col">
+      <label className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground mb-1">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function ThSort({ children, onClick, icon, className = "" }) {
+  return (
+    <th className={`px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-muted-foreground ${className}`}>
+      <button onClick={onClick} className="inline-flex items-center gap-1 hover:text-foreground select-none">
+        {children} {icon}
+      </button>
+    </th>
+  );
+}
+
+function Pagination({ page, pages, total, pageSize, onChange }) {
+  if (pages <= 1) return (
+    <div className="px-4 py-2 border-t border-border text-xs text-muted-foreground text-center">
+      {total} invoice{total === 1 ? "" : "s"}
+    </div>
+  );
+  const goPrev = () => onChange(Math.max(1, page - 1));
+  const goNext = () => onChange(Math.min(pages, page + 1));
+  const from = (page - 1) * pageSize + 1;
+  const to = Math.min(total, page * pageSize);
+  // Build compact page numbers: first, ..., current-1, current, current+1, ..., last
+  const pageBtns = [];
+  const push = (p) => pageBtns.push(p);
+  const seen = new Set();
+  [1, page - 1, page, page + 1, pages].forEach(p => { if (p >= 1 && p <= pages && !seen.has(p)) { seen.add(p); push(p); } });
+  pageBtns.sort((a, b) => a - b);
+  return (
+    <div className="px-4 py-2 border-t border-border flex items-center justify-between text-xs" data-testid="inv-pagination">
+      <div className="text-muted-foreground">Showing <b>{from}</b>–<b>{to}</b> of <b>{total}</b></div>
+      <div className="flex items-center gap-1">
+        <button onClick={goPrev} disabled={page === 1} className="h-7 px-2 rounded border border-border disabled:opacity-30 hover:bg-muted">Prev</button>
+        {pageBtns.map((p, i) => {
+          const gap = i > 0 && p - pageBtns[i - 1] > 1;
+          return (
+            <span key={p} className="flex items-center gap-1">
+              {gap && <span className="text-muted-foreground px-0.5">…</span>}
+              <button
+                data-testid={`inv-page-${p}`}
+                onClick={() => onChange(p)}
+                className={`h-7 min-w-[28px] px-1.5 rounded ${p === page ? "bg-foreground text-background font-bold" : "border border-border hover:bg-muted"}`}
+              >{p}</button>
+            </span>
+          );
+        })}
+        <button onClick={goNext} disabled={page === pages} className="h-7 px-2 rounded border border-border disabled:opacity-30 hover:bg-muted">Next</button>
+      </div>
+    </div>
+  );
+}
+
 function InvoiceList() {
   const [rows, setRows] = useState([]);
   const [q, setQ] = useState("");
+  const [status, setStatus] = useState("");
+  const [source, setSource] = useState("");
+  const [customer, setCustomer] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [sortBy, setSortBy] = useState("date");
+  const [sortDir, setSortDir] = useState("desc");
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(25);
+  const [pages, setPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [pageSummary, setPageSummary] = useState(null); // filtered summary
+  const [facets, setFacets] = useState({ customers: [], sources: [], statuses: [] });
   const [selected, setSelected] = useState(null);
   const [summary, setSummary] = useState(null);
   const [company, setCompany] = useState(null);
   const [payDialog, setPayDialog] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  // Debounced search query
+  const [qDebounced, setQDebounced] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => { setQDebounced(q); setPage(1); }, 400);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  // Any filter change → reset to page 1
+  useEffect(() => { setPage(1); }, [status, source, customer, startDate, endDate, sortBy, sortDir]);
+
   const load = async () => {
-    const [inv, s, c] = await Promise.all([
-      billingApi.listInvoices({ q }),
-      billingApi.summary(),
-      billingApi.getCompany(),
-    ]);
-    setRows(inv.items); setSummary(s); setCompany(c);
+    setLoading(true);
+    try {
+      const [inv, s, c] = await Promise.all([
+        billingApi.listInvoices({
+          q: qDebounced || undefined,
+          status: status || undefined,
+          source: source || undefined,
+          customer: customer || undefined,
+          start_date: startDate || undefined,
+          end_date: endDate || undefined,
+          sort_by: sortBy,
+          sort_dir: sortDir,
+          page, page_size: pageSize,
+        }),
+        billingApi.summary(),
+        billingApi.getCompany(),
+      ]);
+      setRows(inv.items); setTotal(inv.total); setPages(inv.pages || 1);
+      setPageSummary(inv.summary);
+      setSummary(s); setCompany(c);
+    } finally { setLoading(false); }
   };
-  useEffect(() => { load(); }, [q]); // eslint-disable-line
+
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [qDebounced, status, source, customer, startDate, endDate, sortBy, sortDir, page]);
+
+  useEffect(() => {
+    billingApi.invoiceFacets().then(setFacets).catch(() => { });
+  }, []);
+
+  const clearFilters = () => {
+    setQ(""); setStatus(""); setSource(""); setCustomer(""); setStartDate(""); setEndDate("");
+    setSortBy("date"); setSortDir("desc");
+  };
+  const activeFilterCount =
+    (qDebounced ? 1 : 0) + (status ? 1 : 0) + (source ? 1 : 0) +
+    (customer ? 1 : 0) + (startDate ? 1 : 0) + (endDate ? 1 : 0);
+
+  const toggleSort = (col) => {
+    if (sortBy === col) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortBy(col); setSortDir("desc"); }
+  };
+  const SortIcon = ({ col }) => sortBy !== col ? <span className="opacity-30">↕</span> : (sortDir === "asc" ? <span>↑</span> : <span>↓</span>);
 
   return (
     <div className="space-y-4">
@@ -487,7 +611,8 @@ function InvoiceList() {
         <div className="flex-1"><h1 className="font-heading text-3xl font-black tracking-tight">Invoices</h1></div>
         <div className="relative w-72">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search invoice, customer…" className="w-full h-10 pl-9 pr-3 rounded-lg bg-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))]" />
+          <input data-testid="inv-search" value={q} onChange={e => setQ(e.target.value)} placeholder="Search invoice, customer, GSTIN…" className="w-full h-10 pl-9 pr-8 rounded-lg bg-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))]" />
+          {q && <button onClick={() => setQ("")} className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full hover:bg-muted flex items-center justify-center"><X className="w-3 h-3" /></button>}
         </div>
       </div>
 
@@ -501,11 +626,71 @@ function InvoiceList() {
         </div>
       )}
 
+      {/* ---- Filter bar ---- */}
+      <div className="rounded-2xl border border-border bg-card p-4">
+        <div className="flex flex-wrap items-end gap-2">
+          <FilterField label="Status">
+            <select data-testid="filter-status" value={status} onChange={e => setStatus(e.target.value)} className="h-9 px-2 rounded-lg bg-background border border-border text-xs min-w-[130px]">
+              <option value="">Any</option>
+              {(facets.statuses || []).map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </FilterField>
+          <FilterField label="Source">
+            <select data-testid="filter-source" value={source} onChange={e => setSource(e.target.value)} className="h-9 px-2 rounded-lg bg-background border border-border text-xs min-w-[130px]">
+              <option value="">Any</option>
+              {(facets.sources || []).map(s => <option key={s} value={s}>{s.toUpperCase()}</option>)}
+            </select>
+          </FilterField>
+          <FilterField label="Customer">
+            <select data-testid="filter-customer" value={customer} onChange={e => setCustomer(e.target.value)} className="h-9 px-2 rounded-lg bg-background border border-border text-xs min-w-[220px] max-w-[260px] truncate">
+              <option value="">Any</option>
+              {(facets.customers || []).map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </FilterField>
+          <FilterField label="From">
+            <input data-testid="filter-start" type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="h-9 px-2 rounded-lg bg-background border border-border text-xs" />
+          </FilterField>
+          <FilterField label="To">
+            <input data-testid="filter-end" type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="h-9 px-2 rounded-lg bg-background border border-border text-xs" />
+          </FilterField>
+          <button
+            onClick={clearFilters}
+            disabled={activeFilterCount === 0}
+            data-testid="filter-reset"
+            className="h-9 px-3 rounded-lg border border-border text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-muted disabled:opacity-40"
+          >
+            <X className="w-3.5 h-3.5" /> Reset {activeFilterCount ? `(${activeFilterCount})` : ""}
+          </button>
+          {loading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground ml-auto" />}
+        </div>
+
+        {pageSummary && activeFilterCount > 0 && (
+          <div className="mt-3 pt-3 border-t border-border text-xs flex flex-wrap gap-4">
+            <span className="text-muted-foreground">Filtered:</span>
+            <span><b>{pageSummary.count}</b> invoices</span>
+            <span>Billed <b className="tabular-nums">{inr(pageSummary.total_billed)}</b></span>
+            <span>Paid <b className="tabular-nums text-emerald-600">{inr(pageSummary.total_paid)}</b></span>
+            <span>Outstanding <b className="tabular-nums text-[hsl(var(--energy))]">{inr(pageSummary.total_outstanding)}</b></span>
+          </div>
+        )}
+      </div>
+
       <div className="rounded-2xl border border-border bg-card overflow-hidden hidden md:block">
         <table className="w-full text-sm">
-          <thead className="bg-muted/50 border-b border-border"><tr><Th>Invoice</Th><Th>Date</Th><Th>Customer</Th><Th className="text-right">Grand Total</Th><Th className="text-right">Paid</Th><Th>Status</Th><Th></Th></tr></thead>
+          <thead className="bg-muted/50 border-b border-border">
+            <tr>
+              <ThSort onClick={() => toggleSort("invoice_no")} icon={<SortIcon col="invoice_no" />}>Invoice</ThSort>
+              <ThSort onClick={() => toggleSort("date")} icon={<SortIcon col="date" />}>Date</ThSort>
+              <ThSort onClick={() => toggleSort("customer")} icon={<SortIcon col="customer" />}>Customer</ThSort>
+              <Th>Source</Th>
+              <ThSort onClick={() => toggleSort("grand_total")} icon={<SortIcon col="grand_total" />} className="text-right">Grand Total</ThSort>
+              <Th className="text-right">Paid</Th>
+              <Th>Status</Th>
+              <Th></Th>
+            </tr>
+          </thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan={7} className="py-10 text-center text-muted-foreground">No invoices yet</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={8} className="py-10 text-center text-muted-foreground">{loading ? "Loading…" : "No invoices match the current filters"}</td></tr>}
             {rows.map(r => {
               const outstanding = r.grand_total - (r.paid_amount || 0);
               return (
@@ -513,6 +698,11 @@ function InvoiceList() {
                   <td className="px-3 py-2 font-mono text-xs">{r.invoice_no}</td>
                   <td className="px-3 py-2 text-xs">{r.date}</td>
                   <td className="px-3 py-2">{r.customer || "—"}</td>
+                  <td className="px-3 py-2">
+                    <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${SOURCE_STYLES[r.source] || "bg-muted"}`}>
+                      {r.source || "manual"}
+                    </span>
+                  </td>
                   <td className="px-3 py-2 text-right tabular-nums font-bold">{inr(r.grand_total)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">
                     <div>{inr(r.paid_amount || 0)}</div>
@@ -536,6 +726,7 @@ function InvoiceList() {
             })}
           </tbody>
         </table>
+        <Pagination page={page} pages={pages} total={total} pageSize={pageSize} onChange={setPage} />
       </div>
 
       {/* Mobile invoice cards */}
@@ -573,6 +764,7 @@ function InvoiceList() {
             </div>
           );
         })}
+        <Pagination page={page} pages={pages} total={total} pageSize={pageSize} onChange={setPage} />
       </div>
       {selected && <InvoiceView inv={selected} company={company} onClose={() => setSelected(null)} />}
       {payDialog && <PayDialog invoice={payDialog} onClose={() => setPayDialog(null)} onSaved={() => { setPayDialog(null); load(); }} />}

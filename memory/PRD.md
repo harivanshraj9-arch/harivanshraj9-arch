@@ -617,3 +617,29 @@ Complete lifecycle test: Add `SM-LC-100` → create Approved `GP-001` → smart-
 - `/app/backend/requirements.txt` — pip freeze after weasyprint install
 - `/app/frontend/src/lib/billingApi.js` — invoicePdfUrl helper
 - `/app/frontend/src/pages/billing/BillingPage.jsx` — PDF buttons added to desktop row, mobile card, invoice detail modal
+
+## Update — 2026-02-10 · Advanced Invoice Filters + Pagination
+
+### Delivered
+- **Backend query upgrade** on `GET /api/billing/invoices` with:
+  - `status`, `source`, `customer`, `start_date`, `end_date`, `min_amount`, `max_amount` filters
+  - `page`, `page_size` (default 25, max 200), `sort_by` (`date`|`invoice_no`|`grand_total`|`customer`|`created_at`), `sort_dir`
+  - `summary` block in response — count / billed / paid / outstanding across the CURRENT filter (not just the page)
+- **New `GET /api/billing/invoices-facets`** endpoint returning distinct customers, sources, statuses + date envelope (min_date / max_date) for filter-dropdown population.
+- **Frontend filter bar** with 5 fields (Status / Source / Customer / From / To), active-count Reset button, debounced search on invoice_no / customer / GSTIN / remarks.
+- **Live Filtered summary** below the filter bar recalculates counts and ₹ totals whenever any filter changes.
+- **SOURCE badge column** with color coding (WCC = emerald, MANUAL = slate, HISTORICAL = amber).
+- **Column sorting** — click Invoice / Date / Customer / Grand Total headers to sort asc/desc with ↑↓ indicator.
+- **Pagination** — Prev / page numbers with … gaps / Next, "Showing X–Y of Z" text, both on desktop and mobile card views.
+- **Sensible UX defaults** — filter changes reset to page 1, search is debounced 400ms, single spinner shown during load.
+
+### Verified
+- All 31 historical invoices visible, sort by date working
+- Filter `status=Unpaid` → 5 rows, filtered summary shows ₹12,36,835 outstanding
+- Pagination `pageSize=25`, `pages=2` → correctly shows "Showing 26–31 of 31" on page 2
+- Reset button correctly clears all filters and re-shows totals
+
+### Files touched
+- `/app/backend/billing.py` — `list_invoices` rewrite + `invoice_facets` endpoint
+- `/app/frontend/src/lib/billingApi.js` — `invoiceFacets()` helper
+- `/app/frontend/src/pages/billing/BillingPage.jsx` — `SOURCE_STYLES`, `FilterField`, `ThSort`, `Pagination` helpers + expanded `InvoiceList` state

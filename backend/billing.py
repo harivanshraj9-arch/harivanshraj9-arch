@@ -736,15 +736,103 @@ async def create_invoice(payload: InvoiceCreate):
 
 
 @billing_router.get("/invoices")
-async def list_invoices(q: Optional[str] = None, limit: int = Query(500, le=5000)):
-    query = {}
+async def list_invoices(
+    q: Optional[str] = None,
+    status: Optional[str] = None,     # Unpaid | Partly Paid | Paid | Overdue | On Hold
+    source: Optional[str] = None,     # wcc | manual | historical
+    customer: Optional[str] = None,   # exact-match customer filter
+    start_date: Optional[str] = None, # YYYY-MM-DD (invoice date >= start_date)
+    end_date: Optional[str] = None,   # YYYY-MM-DD (invoice date <= end_date)
+    min_amount: Optional[float] = None,
+    max_amount: Optional[float] = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=200),
+    sort_by: str = Query("date", regex="^(date|invoice_no|grand_total|customer|created_at)$"),
+    sort_dir: str = Query("desc", regex="^(asc|desc)$"),
+):
+    query: Dict[str, Any] = {}
     if q:
         query["$or"] = [
             {"invoice_no": {"$regex": q, "$options": "i"}},
             {"customer": {"$regex": q, "$options": "i"}},
+            {"customer_gstin": {"$regex": q, "$options": "i"}},
+            {"remarks": {"$regex": q, "$options": "i"}},
         ]
-    docs = await _db().invoices.find(query, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
-    return {"total": len(docs), "items": docs}
+    if status:
+        query["payment_status"] = status
+    if source:
+        query["source"] = source
+    if customer:
+        query["customer"] = customer
+    if start_date or end_date:
+        drange: Dict[str, Any] = {}
+        if start_date: drange["$gte"] = start_date
+        if end_date: drange["$lte"] = end_date
+        query["date"] = drange
+    if min_amount is not None or max_amount is not None:
+        arange: Dict[str, Any] = {}
+        if min_amount is not None: arange["$gte"] = min_amount
+        if max_amount is not None: arange["$lte"] = max_amount
+        query["grand_total"] = arange
+
+    sort_key = "created_at" if sort_by == "created_at" else sort_by
+    direction = -1 if sort_dir == "desc" else 1
+
+    total = await _db().invoices.count_documents(query)
+    skip = (page - 1) * page_size
+    docs = await _db().invoices.find(query, {"_id": 0}) \
+        .sort(sort_key, direction) \
+        .skip(skip).limit(page_size).to_list(page_size)
+
+    # Aggregate summary across the CURRENT filter (not paginated)
+    pipeline = [
+        {"$match": query},
+        {"$group": {
+            "_id": None,
+            "total_billed": {"$sum": "$grand_total"},
+            "total_paid": {"$sum": {"$ifNull": ["$paid_amount", 0]}},
+            "count": {"$sum": 1},
+        }},
+    ]
+    summary_docs = await _db().invoices.aggregate(pipeline).to_list(1)
+    if summary_docs:
+        s = summary_docs[0]
+        summary = {
+            "count": s["count"],
+            "total_billed": round(s["total_billed"], 2),
+            "total_paid": round(s["total_paid"], 2),
+            "total_outstanding": round(s["total_billed"] - s["total_paid"], 2),
+        }
+    else:
+        summary = {"count": 0, "total_billed": 0.0, "total_paid": 0.0, "total_outstanding": 0.0}
+
+    return {
+        "total": total,
+        "items": docs,
+        "page": page,
+        "page_size": page_size,
+        "pages": (total + page_size - 1) // page_size,
+        "summary": summary,
+    }
+
+
+@billing_router.get("/invoices-facets")
+async def invoice_facets():
+    """Distinct customers, sources, and statuses for filter dropdowns."""
+    col = _db().invoices
+    customers = await col.distinct("customer")
+    sources = await col.distinct("source")
+    statuses = await col.distinct("payment_status")
+    # Also get date range envelope
+    min_doc = await col.find({"date": {"$ne": None}}, {"date": 1, "_id": 0}).sort("date", 1).limit(1).to_list(1)
+    max_doc = await col.find({"date": {"$ne": None}}, {"date": 1, "_id": 0}).sort("date", -1).limit(1).to_list(1)
+    return {
+        "customers": sorted([c for c in customers if c]),
+        "sources": sorted([s for s in sources if s]),
+        "statuses": sorted([s for s in statuses if s]),
+        "min_date": min_doc[0]["date"] if min_doc else None,
+        "max_date": max_doc[0]["date"] if max_doc else None,
+    }
 
 
 @billing_router.get("/invoices/{inv_id}")

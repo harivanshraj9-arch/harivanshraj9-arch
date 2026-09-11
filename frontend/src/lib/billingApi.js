@@ -44,4 +44,5 @@ export const billingApi = {
   historicalCommit: async (payload) => (await http.post("/billing/historical/commit", payload)).data,
   historicalHistory: async () => (await http.get("/billing/historical/history")).data,
   historicalTemplateUrl: () => `${http.defaults.baseURL}/billing/historical/template`,
+  invoiceFacets: async () => (await http.get("/billing/invoices-facets")).data,
 };
