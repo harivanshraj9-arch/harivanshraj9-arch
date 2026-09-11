@@ -1010,9 +1010,14 @@ init_hrms(db)
 app.include_router(hrms_router)
 
 # Vendor Billing module (Rate Master + WCC AI + Invoice generator)
-from billing import billing_router, init_billing, seed_rates_if_empty
+from billing import billing_router, init_billing, seed_rates_if_empty, seed_company_if_empty
 init_billing(db)
 app.include_router(billing_router)
+
+# Historical Invoice Excel Import
+from historical_import import historical_router, init_historical
+init_historical(db)
+app.include_router(historical_router)
 
 # DISCOM Master Data module
 from discom import discom_router, init_discom, ensure_indexes as ensure_discom_indexes
@@ -1048,6 +1053,7 @@ logger = logging.getLogger(__name__)
 async def on_startup():
     await seed_resources_if_empty()
     await seed_rates_if_empty()
+    await seed_company_if_empty()
     # Ensure indexes
     await db.expenses.create_index([("date", -1)])
     await db.expenses.create_index([("category", 1)])

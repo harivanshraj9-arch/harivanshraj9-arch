@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Menu, X, Zap, Plus, Pencil, Trash2, Search, Download, Upload,
-  Power, Save, FileText, History, ClipboardList, Sparkles, ScrollText, Printer, Loader2 } from "lucide-react";
+  Power, Save, FileText, History, ClipboardList, Sparkles, ScrollText, Printer, Loader2,
+  FileSpreadsheet, AlertTriangle, CheckCircle2, Eye } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import Sidebar from "@/components/Sidebar";
 import MobileBottomNav from "@/components/MobileBottomNav";
@@ -9,12 +10,14 @@ import { useTheme } from "@/lib/theme";
 import { billingApi } from "@/lib/billingApi";
 import { inr } from "@/lib/format";
 import { amountToWords } from "@/lib/amountInWords";
+import { printInvoice, previewInvoice } from "@/lib/invoiceRenderer";
 
 const TABS = [
   { key: "rates", label: "Rate Master", icon: ClipboardList },
   { key: "new", label: "New Invoice (WCC)", icon: Sparkles },
   { key: "bulk", label: "Bulk WCC", icon: Upload },
   { key: "invoices", label: "Invoices", icon: FileText },
+  { key: "import", label: "Data Import", icon: FileSpreadsheet },
   { key: "statement", label: "Statement", icon: ScrollText },
   { key: "company", label: "Company", icon: History },
   { key: "audit", label: "Audit Log", icon: ScrollText },
@@ -69,6 +72,7 @@ export default function BillingPage() {
           {tab === "new" && <NewInvoice />}
           {tab === "bulk" && <BulkWCC />}
           {tab === "invoices" && <InvoiceList />}
+          {tab === "import" && <HistoricalImport />}
           {tab === "statement" && <StatementPage />}
           {tab === "company" && <CompanyForm />}
           {tab === "audit" && <AuditLog />}
@@ -1084,80 +1088,284 @@ function InvoiceView({ inv, company, onClose }) {
 }
 const Row = ({ k, v }) => <div className="flex justify-between border-b border-border py-0.5"><span className="text-muted-foreground">{k}</span><span className="tabular-nums font-semibold">{inr(v)}</span></div>;
 
-function printInvoice(inv, company) {
-  const w = window.open("", "_blank", "width=900,height=1000");
-  if (!w) { toast.error("Enable popups"); return; }
-  const co = company || {};
-  const words = amountToWords(inv.grand_total);
-  const lines = inv.lines.map((l, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(l.name)}</td><td>${l.hsn || ""}</td><td>${l.unit}</td><td class="num">${l.quantity}</td><td class="num">₹${l.rate.toFixed(2)}</td><td class="num">${l.gst_pct}%</td><td class="num">₹${l.amount.toFixed(2)}</td></tr>`).join("");
-  w.document.write(`<!DOCTYPE html><html><head><title>${inv.invoice_no}</title><style>
-    body{font-family:system-ui,sans-serif;padding:24px;color:#111;font-size:12px}
-    h1{margin:0;font-size:22px}
-    .head{display:flex;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:12px;margin-bottom:14px;align-items:flex-start;gap:12px}
-    .logo{max-height:60px;max-width:80px;object-fit:contain}
-    .muted{color:#666;font-size:11px}
-    .box{border:1px solid #ccc;padding:10px;border-radius:4px}
-    table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}
-    th,td{border:1px solid #ccc;padding:5px 7px;text-align:left}th{background:#f4f4f5}
-    .num{text-align:right}
-    .bottom{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;margin-top:14px}
-    .totals{border:1px solid #ccc;padding:10px;border-radius:4px}
-    .totals table{margin:0}
-    .totals td{border:0;padding:3px 0}
-    .grand{margin-top:8px;padding:8px 10px;background:#111;color:#fff;text-align:right;font-weight:700;font-size:15px;border-radius:4px}
-    .words{padding:8px 10px;background:#f4f4f5;font-style:italic;margin-top:6px;border-radius:4px}
-    .bank{font-size:11px}
-    .bank b{display:inline-block;min-width:80px}
-    .foot{margin-top:18px;padding-top:10px;border-top:1px dashed #ccc;font-size:10px;color:#666;text-align:center}
-    .sig{margin-top:40px;display:flex;justify-content:space-between;font-size:11px}
-  </style></head><body>
-  <div class="head">
-    <div style="display:flex;gap:12px;align-items:flex-start;flex:1">
-      ${co.logo ? `<img src="${co.logo}" class="logo" />` : ""}
+/* ============= DATA IMPORT — HISTORICAL EXCEL ============= */
+function HistoricalImport() {
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [committing, setCommitting] = useState(false);
+  const [result, setResult] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [skipDuplicates, setSkipDuplicates] = useState(true);
+  const [expanded, setExpanded] = useState({});
+
+  const loadHistory = async () => {
+    try { const d = await billingApi.historicalHistory(); setHistory(d.items || []); }
+    catch { /* silent */ }
+  };
+  useEffect(() => { loadHistory(); }, []);
+
+  const doPreview = async () => {
+    if (!file) return toast.error("Please choose an Excel file first");
+    setBusy(true); setPreview(null); setResult(null);
+    try {
+      const d = await billingApi.historicalPreview(file);
+      setPreview(d);
+      toast.success(`Parsed ${d.total_invoices} invoices (${d.total_line_items} line items)`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Preview failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doCommit = async () => {
+    if (!preview) return;
+    setCommitting(true);
+    try {
+      const r = await billingApi.historicalCommit({
+        filename: preview.filename,
+        file_hash: preview.file_hash,
+        invoices: preview.invoices,
+        skip_duplicates: skipDuplicates,
+      });
+      setResult(r);
+      setPreview(null); setFile(null);
+      toast.success(`Imported ${r.imported_count} invoices · ${r.skipped_count} skipped · ${r.failed_count} failed`);
+      loadHistory();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Import failed");
+    } finally {
+      setCommitting(false);
+    }
+  };
+
+  const dupCount = preview?.duplicates?.length || 0;
+
+  return (
+    <div className="space-y-6" data-testid="historical-import">
       <div>
-        <h1>${escapeHtml(co.name || "R K ENTERPRISES")}</h1>
-        <div class="muted">${escapeHtml(co.address || "")}</div>
-        <div class="muted">${co.phone ? "☎ " + escapeHtml(co.phone) : ""} ${co.email ? " · ✉ " + escapeHtml(co.email) : ""}</div>
-        <div class="muted"><b>GSTIN:</b> ${escapeHtml(co.gstin || "—")} ${co.pan ? " · <b>PAN:</b> " + escapeHtml(co.pan) : ""}</div>
+        <h1 className="font-heading text-3xl sm:text-4xl font-black tracking-tight">Data Import</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Import historical invoice + payment records from an Excel file.
+          Invoice numbers, dates, tax values, TDS, retention, holds and payments are
+          preserved <b>exactly as-is</b> — no recalculation from current Rate Master.
+        </p>
+      </div>
+
+      {/* Step 1: Upload + Template */}
+      <div className="rounded-2xl border border-border bg-card p-5">
+        <div className="flex flex-wrap items-start gap-4">
+          <div className="flex-1 min-w-[280px]">
+            <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground mb-2">Step 1 — Upload Excel</div>
+            <label className="inline-flex items-center gap-1.5 px-4 h-10 rounded-full border border-border text-sm font-semibold cursor-pointer hover:bg-muted" data-testid="hist-file-btn">
+              <Upload className="w-4 h-4" />
+              {file ? file.name : "Choose .xlsx / .xls"}
+              <input type="file" accept=".xlsx,.xls" className="hidden" onChange={e => { setFile(e.target.files?.[0] || null); setPreview(null); setResult(null); }} />
+            </label>
+            <button
+              onClick={doPreview}
+              disabled={!file || busy}
+              data-testid="hist-preview-btn"
+              className="ml-2 inline-flex items-center gap-1.5 px-4 h-10 rounded-full bg-foreground text-background text-sm font-semibold disabled:opacity-50"
+            >
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+              Preview
+            </button>
+          </div>
+          <div className="text-right text-xs">
+            <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground mb-2">Excel Template</div>
+            <a
+              href={billingApi.historicalTemplateUrl()}
+              className="inline-flex items-center gap-1.5 px-4 h-10 rounded-full border border-border text-sm font-semibold hover:bg-muted"
+              data-testid="hist-template-btn"
+            >
+              <Download className="w-4 h-4" />
+              Download Template
+            </a>
+            <div className="mt-1 text-[10px] text-muted-foreground">3 sheets · Data / Instructions / Example</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Step 2: Preview */}
+      {preview && (
+        <div className="rounded-2xl border border-border bg-card p-5 space-y-4" data-testid="hist-preview">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">Step 2 — Review Preview</div>
+              <h2 className="font-heading text-lg font-bold mt-1">{preview.filename}</h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs inline-flex items-center gap-1.5">
+                <input type="checkbox" checked={skipDuplicates} onChange={e => setSkipDuplicates(e.target.checked)} />
+                Skip duplicates
+              </label>
+              <button
+                onClick={doCommit}
+                disabled={committing}
+                data-testid="hist-commit-btn"
+                className="inline-flex items-center gap-1.5 px-4 h-10 rounded-full bg-foreground text-background text-sm font-semibold disabled:opacity-50"
+              >
+                {committing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                Confirm Import ({preview.invoices.length - (skipDuplicates ? dupCount : 0)})
+              </button>
+            </div>
+          </div>
+
+          {/* Summary tiles */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <Stat label="Invoices" value={preview.total_invoices} />
+            <Stat label="Line Items" value={preview.total_line_items} />
+            <Stat label="Duplicates" value={dupCount} warn={dupCount > 0} />
+            <Stat label="Warnings" value={preview.warnings.length} warn={preview.warnings.length > 0} />
+          </div>
+
+          {/* Warnings */}
+          {preview.warnings.length > 0 && (
+            <div className="rounded-lg border border-amber-500/50 bg-amber-500/5 p-3">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-amber-700 mb-2">
+                <AlertTriangle className="w-3.5 h-3.5" /> {preview.warnings.length} warning{preview.warnings.length > 1 ? "s" : ""}
+              </div>
+              <div className="max-h-48 overflow-y-auto text-xs space-y-1">
+                {preview.warnings.map((w, i) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <span className="text-muted-foreground shrink-0">row {w.row}</span>
+                    <span className="font-medium">{w.issue}</span>
+                    {w.invoice_no && <span className="text-muted-foreground">({w.invoice_no})</span>}
+                    {w.detail && <span className="text-muted-foreground truncate">— {w.detail}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Invoice list */}
+          <div className="rounded-lg border border-border overflow-hidden">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/50 border-b border-border">
+                <tr>
+                  <Th>Invoice #</Th><Th>Date</Th><Th>Lines</Th><Th className="!text-right">Tax Value</Th><Th className="!text-right">Invoice Value</Th><Th className="!text-right">Paid</Th><Th className="!text-right">Pending</Th><Th>Status</Th><Th></Th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.invoices.map((inv, idx) => {
+                  const isExp = expanded[inv.invoice_no];
+                  const isDup = preview.duplicates.includes(inv.invoice_no);
+                  return (
+                    <>
+                      <tr key={inv.invoice_no} className={`border-b border-border last:border-0 ${isDup ? "bg-red-500/5" : ""}`}>
+                        <td className="px-3 py-1.5 font-mono font-semibold">{inv.invoice_no}</td>
+                        <td className="px-3 py-1.5">{inv.date}</td>
+                        <td className="px-3 py-1.5">{inv.lines.length}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">{inv.tax_value_raw != null ? inr(inv.tax_value_raw) : "—"}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{inv.invoice_value_raw != null ? inr(inv.invoice_value_raw) : "—"}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">{inv.payment_received != null ? inr(inv.payment_received) : "—"}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">{inv.pending_balance != null ? inr(inv.pending_balance) : "—"}</td>
+                        <td className="px-3 py-1.5">
+                          {isDup && <span className="inline-block px-1.5 py-0.5 rounded bg-red-500/10 text-red-700 text-[10px] font-bold">DUP</span>}
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <button onClick={() => setExpanded(e => ({ ...e, [inv.invoice_no]: !isExp }))} className="text-xs px-2 py-0.5 rounded border border-border hover:bg-muted">
+                            {isExp ? "Hide" : "Lines"}
+                          </button>
+                        </td>
+                      </tr>
+                      {isExp && (
+                        <tr className="bg-muted/30 border-b border-border">
+                          <td colSpan={9} className="px-3 py-2">
+                            <div className="grid grid-cols-4 gap-1 text-xs">
+                              <div className="font-bold">Description</div>
+                              <div className="font-bold text-right">Rate</div>
+                              <div className="font-bold text-right">Qty</div>
+                              <div className="font-bold text-right">Amount</div>
+                              {inv.lines.map((l, li) => (
+                                <>
+                                  <div>{l.name}</div>
+                                  <div className="text-right tabular-nums">₹{inr(l.rate)}</div>
+                                  <div className="text-right tabular-nums">{l.quantity}</div>
+                                  <div className="text-right tabular-nums">₹{inr(l.amount)}</div>
+                                </>
+                              ))}
+                              {(inv.tds || inv.retention || inv.sla_penalty) && (
+                                <div className="col-span-4 mt-2 text-muted-foreground">
+                                  {inv.tds ? <span className="mr-3">TDS: ₹{inr(inv.tds)}</span> : ""}
+                                  {inv.sla_penalty ? <span className="mr-3">SLA Penalty: ₹{inr(inv.sla_penalty)}</span> : ""}
+                                  {inv.retention ? <span className="mr-3">Retention: ₹{inr(inv.retention)}</span> : ""}
+                                  {inv.remarks ? <span>Remarks: {inv.remarks}</span> : ""}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3: Result */}
+      {result && (
+        <div className="rounded-2xl border border-emerald-500/50 bg-emerald-500/5 p-5">
+          <div className="flex items-center gap-2 text-emerald-700 font-bold text-sm mb-2">
+            <CheckCircle2 className="w-4 h-4" /> Import Complete
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+            <Stat label="Imported" value={result.imported_count} />
+            <Stat label="Skipped" value={result.skipped_count} />
+            <Stat label="Failed" value={result.failed_count} warn={result.failed_count > 0} />
+            <Stat label="Total" value={result.total_provided} />
+          </div>
+          {result.failed_count > 0 && (
+            <div className="mt-3 text-xs">
+              <div className="font-bold text-red-700 mb-1">Failed:</div>
+              {result.failed.map((f, i) => (<div key={i}>{f.invoice_no}: {f.reason}</div>))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Import History */}
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
+        <div className="px-4 py-3 border-b border-border font-heading font-bold">Import History</div>
+        <table className="w-full text-xs">
+          <thead className="bg-muted/50 border-b border-border">
+            <tr><Th>When</Th><Th>File</Th><Th className="!text-right">Imported</Th><Th className="!text-right">Skipped</Th><Th className="!text-right">Failed</Th></tr>
+          </thead>
+          <tbody>
+            {history.length === 0 && (
+              <tr><td colSpan={5} className="py-6 text-center text-muted-foreground">No imports yet</td></tr>
+            )}
+            {history.map(h => (
+              <tr key={h.id} className="border-b border-border last:border-0">
+                <td className="px-3 py-1.5">{h.created_at.slice(0, 19).replace("T", " ")}</td>
+                <td className="px-3 py-1.5 font-mono">{h.filename}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-emerald-600">{h.imported_count}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{h.skipped_count}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-red-600">{h.failed_count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
-    <div style="text-align:right">
-      <div style="font-size:16px;font-weight:700">TAX INVOICE</div>
-      <div class="muted"><b>No:</b> ${escapeHtml(inv.invoice_no)}</div>
-      <div class="muted"><b>Date:</b> ${inv.date}</div>
-      ${inv.due_date ? `<div class="muted"><b>Due:</b> ${inv.due_date}</div>` : ""}
-    </div>
-  </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-    <div class="box"><div class="muted">Bill To</div><b>${escapeHtml(inv.customer || "-")}</b><br/>${escapeHtml(inv.customer_address || "")}<br/><span class="muted">GSTIN:</span> ${escapeHtml(inv.customer_gstin || "-")}</div>
-    <div class="box"><div class="muted">Place of Supply</div><b>${escapeHtml(inv.place_of_supply || "-")}</b><br/><span class="muted">Tax:</span> ${inv.is_igst ? "IGST (Inter-state)" : "CGST + SGST"}<br/>${inv.wcc_filename ? `<span class="muted">WCC Ref:</span> ${escapeHtml(inv.wcc_filename)}` : ""}</div>
-  </div>
-  <table><thead><tr><th>#</th><th>Item Description</th><th>HSN</th><th>Unit</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">GST%</th><th class="num">Amount</th></tr></thead><tbody>${lines}</tbody></table>
-  <div class="bottom">
-    <div>
-      <div class="words"><b>Amount in Words:</b> ${escapeHtml(words)}</div>
-      ${co.bank_name ? `<div class="box bank" style="margin-top:8px"><div class="muted" style="margin-bottom:4px"><b>BANK DETAILS</b></div>
-        <b>Bank:</b> ${escapeHtml(co.bank_name || "")}<br/>
-        <b>A/c No:</b> ${escapeHtml(co.account_number || "")}<br/>
-        <b>IFSC:</b> ${escapeHtml(co.ifsc || "")}<br/>
-        ${co.branch ? `<b>Branch:</b> ${escapeHtml(co.branch)}` : ""}
-      </div>` : ""}
-    </div>
-    <div class="totals">
-      <table>
-        <tr><td>Subtotal</td><td class="num">₹ ${inv.subtotal.toFixed(2)}</td></tr>
-        ${!inv.is_igst ? `<tr><td>CGST</td><td class="num">₹ ${inv.cgst.toFixed(2)}</td></tr><tr><td>SGST</td><td class="num">₹ ${inv.sgst.toFixed(2)}</td></tr>` : `<tr><td>IGST</td><td class="num">₹ ${inv.igst.toFixed(2)}</td></tr>`}
-        <tr><td>Round Off</td><td class="num">₹ ${inv.round_off.toFixed(2)}</td></tr>
-      </table>
-      <div class="grand">Grand Total: ₹ ${inv.grand_total.toFixed(2)}</div>
-      ${inv.payment_status === "Paid" ? `<div style="margin-top:6px;padding:4px;background:#dcfce7;color:#065f46;text-align:center;border-radius:4px;font-weight:700">PAID</div>` : ""}
-    </div>
-  </div>
-  <div class="sig"><div><b>Customer's Signature</b></div><div style="text-align:right"><b>For ${escapeHtml(co.name || "R K ENTERPRISES")}</b><br/><br/><br/>Authorised Signatory</div></div>
-  <div class="foot">${escapeHtml(co.invoice_footer || "")}<br/>This is a computer-generated invoice.</div>
-  <script>window.onload=()=>{setTimeout(()=>window.print(),300)};</script></body></html>`);
-  w.document.close();
+  );
 }
+
+function Stat({ label, value, warn }) {
+  return (
+    <div className={`rounded-lg border ${warn ? "border-amber-500/50 bg-amber-500/5" : "border-border bg-muted/30"} px-3 py-2`}>
+      <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">{label}</div>
+      <div className={`text-xl font-heading font-black tabular-nums ${warn ? "text-amber-700" : ""}`}>{value}</div>
+    </div>
+  );
+}
+
+/* NOTE: printInvoice / previewInvoice / renderInvoiceHTML now live in /app/frontend/src/lib/invoiceRenderer.js */
 const escapeHtml = (s) => String(s || "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 /* ============= AUDIT LOG ============= */

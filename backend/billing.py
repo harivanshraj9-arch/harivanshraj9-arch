@@ -144,8 +144,12 @@ class Invoice(BaseModel):
     customer: str = ""
     customer_gstin: str = ""
     customer_address: str = ""
+    customer_state: str = ""
+    customer_state_code: str = ""
+    shipped_to: str = ""              # shipping address (defaults to bill-to if empty)
+    shipped_to_gstin: str = ""
     place_of_supply: str = ""
-    is_igst: bool = False   # if buyer in different state, use IGST
+    is_igst: bool = False              # if buyer in different state, use IGST
     lines: List[InvoiceLine] = []
     subtotal: float = 0.0
     cgst: float = 0.0
@@ -155,9 +159,26 @@ class Invoice(BaseModel):
     grand_total: float = 0.0
     notes: str = ""
     wcc_filename: Optional[str] = None
+    wcc_file_hash: Optional[str] = None            # SHA-256 for duplicate protection
+    source: Literal["wcc", "manual", "historical"] = "manual"
     payment_status: Literal["Unpaid", "Partly Paid", "Paid", "Overdue"] = "Unpaid"
     paid_amount: float = 0.0
     due_date: Optional[str] = None
+    # ---- Historical / advanced financial fields (optional, preserved as-imported) ----
+    tax_value_raw: Optional[float] = None          # from historical Excel — pre-tax value
+    gst_pct_raw: Optional[float] = None            # historical GST%
+    invoice_value_raw: Optional[float] = None      # historical grand total from Excel
+    sla_penalty: Optional[float] = None
+    retention: Optional[float] = None
+    other_deductions: Optional[float] = None
+    unsync_hold: Optional[float] = None
+    bi_signoff_hold: Optional[float] = None
+    tds: Optional[float] = None
+    payment_received: Optional[float] = None
+    payment_date: Optional[str] = None
+    pending_balance: Optional[float] = None
+    remarks: Optional[str] = None
+    historical_source_row: Optional[int] = None    # Excel row number for traceability
     created_at: str = Field(default_factory=_now)
 
 
@@ -175,11 +196,17 @@ class InvoiceCreate(BaseModel):
     customer: str = ""
     customer_gstin: str = ""
     customer_address: str = ""
+    customer_state: str = ""
+    customer_state_code: str = ""
+    shipped_to: str = ""
+    shipped_to_gstin: str = ""
     place_of_supply: str = ""
     is_igst: bool = False
     lines: List[InvoiceLineIn]
     notes: str = ""
     wcc_filename: Optional[str] = None
+    wcc_file_hash: Optional[str] = None
+    source: Literal["wcc", "manual", "historical"] = "manual"
     due_date: Optional[str] = None
 
 
@@ -194,15 +221,24 @@ class CompanySettings(BaseModel):
     gstin: str = ""
     pan: str = ""
     address: str = ""
+    state: str = ""
+    state_code: str = ""
     phone: str = ""
     email: str = ""
     bank_name: str = ""
     account_number: str = ""
+    account_name: str = ""
     ifsc: str = ""
     branch: str = ""
     logo: Optional[str] = None  # data URL
-    invoice_prefix: str = "RKE"
+    invoice_prefix: str = "RK"
     invoice_footer: str = "Thank you for your business."
+    authorized_signatory: str = ""
+    default_customer: str = ""             # pre-filled Bill-To for new invoices
+    default_customer_gstin: str = ""
+    default_customer_address: str = ""
+    default_customer_state: str = ""
+    default_customer_state_code: str = ""
 
 
 # ============================================================
@@ -221,18 +257,68 @@ async def seed_rates_if_empty():
 
 
 async def _next_invoice_no() -> str:
-    yr = date.today().strftime("%Y-%m")
-    prefix = f"RKE/{yr}/"
+    """Generate invoice number in RK Enterprises format: RK/YY-YY/NNNNNN
+    Fiscal year runs Apr → Mar (Indian convention). Sequence starts at 101233
+    (right after the last historical Excel value 101232)."""
+    today = date.today()
+    fy_start = today.year if today.month >= 4 else today.year - 1
+    fy_end = fy_start + 1
+    prefix = f"RK/{str(fy_start)[2:]}-{str(fy_end)[2:]}/"
+    # Highest existing number for any invoice matching this pattern OR earlier historicals
     last = await _db().invoices.find_one(
-        {"invoice_no": {"$regex": f"^{re.escape(prefix)}"}},
+        {"invoice_no": {"$regex": r"^RK/\d{2}-\d{2}/\d+$"}},
         sort=[("invoice_no", -1)],
     )
-    n = 1
+    n = 101233  # first fresh number after historical import
     if last and last.get("invoice_no"):
-        m = re.match(r"RKE/\d{4}-\d{2}/(\d+)", last["invoice_no"])
+        m = re.match(r"RK/(\d{2})-(\d{2})/(\d+)", last["invoice_no"])
         if m:
-            n = int(m.group(1)) + 1
-    return f"{prefix}{n:04d}"
+            last_prefix = f"RK/{m.group(1)}-{m.group(2)}/"
+            candidate = int(m.group(3)) + 1
+            if last_prefix == prefix:
+                n = max(n, candidate)
+            else:
+                # different FY — start new FY at 101233 but never go below existing max
+                n = max(n, candidate)
+    return f"{prefix}{n:06d}"
+
+
+async def seed_company_if_empty():
+    """Pre-fill R K Enterprises company defaults on first startup.
+    Idempotent: only fills fields that are currently blank/empty; never overwrites user data."""
+    existing = await _db().company.find_one({"_id": "default"}) or {}
+    defaults = {
+        "name": "R K ENTERPRISES",
+        "gstin": "09GAHPK2426K1ZF",
+        "pan": "GAHPK2426K",
+        "address": "Gangepura, Nigohi, Tilhar, Distric-Shahjahanpur, Uttar Pradesh, PIN 242407",
+        "state": "Uttar Pradesh",
+        "state_code": "09",
+        "phone": "+91 99365 98421",
+        "email": "harivanshraj9@gmail.com",
+        "account_name": "R K ENTERPRISES",
+        "invoice_prefix": "RK",
+        "invoice_footer": "Thank you for your business.",
+        "authorized_signatory": "R K ENTERPRISES",
+        "default_customer": "GOMATI SMART METERING PRIVATE LIMITED",
+        "default_customer_state": "Uttar Pradesh",
+        "default_customer_state_code": "09",
+    }
+    # Only set fields that are currently empty/missing/whitespace/placeholder-fake
+    patch = {}
+    fake_gstin_pattern = re.compile(r"^09ABCDE\d{4}F1Z5$", re.I)  # our previous placeholder
+    for k, v in defaults.items():
+        cur = (existing.get(k) or "")
+        if isinstance(cur, str):
+            cur_stripped = cur.strip()
+            if not cur_stripped or (k == "gstin" and fake_gstin_pattern.match(cur_stripped)):
+                patch[k] = v
+        elif cur in (None, 0):
+            patch[k] = v
+    if patch:
+        patch["updated_at"] = _now()
+        await _db().company.update_one({"_id": "default"}, {"$set": patch}, upsert=True)
+        logging.info(f"Seeded/updated company defaults: {list(patch.keys())}")
 
 
 async def audit(action: str, entity: str, entity_id: str = None, detail: str = "", actor: str = "admin"):
@@ -595,6 +681,12 @@ def _compute_totals(lines: List[Dict[str, Any]], is_igst: bool) -> Dict[str, flo
 
 @billing_router.post("/invoices")
 async def create_invoice(payload: InvoiceCreate):
+    # WCC duplicate protection: same file already turned into an invoice?
+    if payload.wcc_file_hash:
+        dup = await _db().invoices.find_one(
+            {"wcc_file_hash": payload.wcc_file_hash}, {"_id": 0, "invoice_no": 1, "id": 1})
+        if dup:
+            raise HTTPException(409, f"This WCC file was already processed (Invoice {dup.get('invoice_no')})")
     # Resolve missing rate/hsn/gst_pct from Rate Master (SNAPSHOT)
     resolved_lines: List[Dict[str, Any]] = []
     for l in payload.lines:
@@ -624,14 +716,21 @@ async def create_invoice(payload: InvoiceCreate):
     inv = Invoice(
         invoice_no=inv_no,
         customer=payload.customer, customer_gstin=payload.customer_gstin,
-        customer_address=payload.customer_address, place_of_supply=payload.place_of_supply,
+        customer_address=payload.customer_address,
+        customer_state=payload.customer_state, customer_state_code=payload.customer_state_code,
+        shipped_to=payload.shipped_to or payload.customer_address,
+        shipped_to_gstin=payload.shipped_to_gstin or payload.customer_gstin,
+        place_of_supply=payload.place_of_supply,
         is_igst=payload.is_igst,
         lines=[InvoiceLine(**l) for l in resolved_lines],
         notes=payload.notes, wcc_filename=payload.wcc_filename,
+        wcc_file_hash=payload.wcc_file_hash,
+        source=payload.source,
         due_date=payload.due_date, **totals,
     ).model_dump()
     await _db().invoices.insert_one(inv)
-    await audit("create", "invoice", inv["id"], f"Invoice {inv_no} · ₹{inv['grand_total']}")
+    await audit("create", "invoice", inv["id"],
+                f"Invoice {inv_no} · ₹{inv['grand_total']} · src={payload.source}")
     inv.pop("_id", None)
     return inv
 

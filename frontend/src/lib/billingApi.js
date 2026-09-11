@@ -32,4 +32,15 @@ export const billingApi = {
   listPayments: async (id) => (await http.get(`/billing/invoices/${id}/payments`)).data,
   deletePayment: async (pid) => (await http.delete(`/billing/payments/${pid}`)).data,
   statement: async (customer, start, end) => (await http.get("/billing/statement", { params: q({ customer, start, end }) })).data,
+
+  // ---- Historical Excel Import ----
+  historicalPreview: async (file) => {
+    const fd = new FormData(); fd.append("file", file);
+    return (await http.post("/billing/historical/preview", fd, {
+      headers: { "Content-Type": "multipart/form-data" }, timeout: 120000,
+    })).data;
+  },
+  historicalCommit: async (payload) => (await http.post("/billing/historical/commit", payload)).data,
+  historicalHistory: async () => (await http.get("/billing/historical/history")).data,
+  historicalTemplateUrl: () => `${http.defaults.baseURL}/billing/historical/template`,
 };

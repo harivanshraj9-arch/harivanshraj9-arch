@@ -554,3 +554,51 @@ Complete lifecycle test: Add `SM-LC-100` → create Approved `GP-001` → smart-
 ### Files touched
 - `/app/frontend/src/pages/discom/DiscomPage.jsx` — debounced auto-search useEffect, X-clear button, Reset button, corrected dropdown options
 - `/app/backend/discom.py` — index-friendly regex query, extra indexes, case-insensitive CON_STATUS filter
+
+## Update — 2026-02-10 · Vendor Billing Upgrade (Phases 1 + 2)
+
+### Delivered
+- **Reusable Invoice Renderer** at `/app/frontend/src/lib/invoiceRenderer.js` — the single source of truth for all invoice HTML output. Layout matches the R K Enterprises target PDF: bordered 3-column Billed To / Shipped To / Billed From, Sr.No/Description/HSN/Unit/Qty/Rate/Total Amount table, right-aligned tax summary (SGST 9% / CGST 9% / Round Off / G.Total in navy), bottom-left Bank Details, In Words + Authorized Signatory. Used by Invoices list, WCC (single + bulk), historical view, and future PDF export.
+- **Data model extended** on `Invoice` (backward compatible — all new fields optional): `shipped_to`, `shipped_to_gstin`, `customer_state`, `customer_state_code`, `source` (`wcc` | `manual` | `historical`), `wcc_file_hash`, plus historical fields (`tax_value_raw`, `gst_pct_raw`, `invoice_value_raw`, `sla_penalty`, `retention`, `other_deductions`, `unsync_hold`, `bi_signoff_hold`, `tds`, `payment_received`, `payment_date`, `pending_balance`, `remarks`, `historical_source_row`).
+- **`CompanySettings` extended** with `state`, `state_code`, `account_name`, `authorized_signatory`, `default_customer` (+ its GSTIN/address/state/state_code). Idempotent seed on startup fills only blank fields with real R K Enterprises values (GSTIN 09GAHPK2426K1ZF, PAN GAHPK2426K, Uttar Pradesh / 09) — never overwrites bank details user has already set.
+- **WCC duplicate protection** — `wcc_file_hash` (SHA-256) checked before invoice create; returns 409 with the existing invoice number.
+- **Invoice numbering** switched to `RK/YY-YY/NNNNNN` matching historical format; fiscal-year aware; new invoices continue from `101233` (right after historical 101232). Historical invoices imported keep their original numbers exactly.
+- **Historical Excel Import** (`/app/backend/historical_import.py`, new module):
+  - `POST /api/billing/historical/preview` — parse Book1.xlsx-style Excel, group multi-row line items under one invoice (blank Invoice Number = continuation), detect duplicates, surface warnings without silent data changes
+  - `POST /api/billing/historical/commit` — persist with `source="historical"`, preserving Tax Value / GST / Invoice Value / TDS / SLA Penalty / Retention / Holds / all payment amounts + dates
+  - `GET  /api/billing/historical/history` — list of past imports
+  - `GET  /api/billing/historical/template` — downloadable 3-sheet Excel template (Invoice Data / Instructions / Example) with template version 1.0.0
+- **New `Data Import` tab** in Billing with 3-step flow (Upload → Preview → Confirm), warnings panel, duplicate detection, per-invoice line-item expander, import history table, template download button.
+
+### Verified end-to-end with the actual Book1.xlsx
+- 31 unique invoices grouped from 69 rows → matches user's expected count
+- 16 invoices correctly detected as multi-line-item (e.g. `RK/25-26/101202` has 1-PH Meter NSC ×6 + 1-PH Meter Consumer ×304)
+- Original invoice numbers preserved (`RK/25-26/101201` through `RK/26-27/101232`)
+- Raw financial fields intact: GST=11,997, Invoice Value=78,647, TDS=667, Retention=7,865, Paid=66,183, Pending=7,866 on invoice 101202
+- Duplicate detection: re-uploading same file flags all 31 as duplicates
+- Total dashboard: ₹51.37 lakh billed · ₹32.92 lakh paid · ₹18.45 lakh outstanding · 26 Partly Paid · 6 Unpaid
+- Printed invoice HTML matches target PDF layout (screenshots taken for both `manual` and `historical` source badges)
+
+### Preserved (nothing broken)
+- Rate Master (all 12 seeded rates intact, CRUD + Excel import/export)
+- WCC PDF parsing (`pdfplumber` + `rapidfuzz`), single + bulk flows
+- Invoice creation via WCC or manual entry
+- Payment tracking (`/invoices/{id}/payment`, `/invoices/{id}/payments`)
+- Statement generation
+- Audit log (now also records `import` action for historical batches)
+- Company Settings CRUD
+
+### Deferred to Phase 3 (next session)
+- **P6 — Enterprise Dashboard redesign** (KPIs, recent invoices, pending payments, quick actions, remove neon/glow)
+- **P6 — Professional navigation** (`Dashboard / Billing / Data Import / Google Files / Company Settings / Audit Log` structure)
+- **P7 — Google Files module** (consolidate scattered Google Sheets/Docs/Drive cards)
+- **Server-side PDF endpoint** `/api/billing/invoices/{id}/pdf` (currently users can Save-as-PDF via browser print dialog — same layout)
+- **Advanced Invoice list filters** (status / date range / customer / source facets — currently only search + list)
+
+### Files changed / added
+- `/app/backend/billing.py` — Invoice + CompanySettings model, WCC dup check, seed defaults, new invoice numbering
+- `/app/backend/historical_import.py` — NEW module (~450 lines)
+- `/app/backend/server.py` — wire new router + startup seed
+- `/app/frontend/src/lib/invoiceRenderer.js` — NEW shared renderer (~350 lines)
+- `/app/frontend/src/lib/billingApi.js` — historicalPreview/Commit/History/TemplateUrl
+- `/app/frontend/src/pages/billing/BillingPage.jsx` — replaced legacy inline printInvoice, added Data Import tab + `HistoricalImport` component + `Stat` tile
