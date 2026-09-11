@@ -527,6 +527,7 @@ function InvoiceList() {
                   <td className="px-3 py-2 text-right">
                     <button onClick={() => setSelected(r)} className="text-xs px-3 py-1 rounded-full border border-border hover:bg-muted">View</button>
                     <a href={billingApi.invoiceExcelUrl(r.id)} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1 rounded-full border border-border hover:bg-muted ml-1">Excel</a>
+                    <a href={billingApi.invoicePdfUrl(r.id)} target="_blank" rel="noopener noreferrer" data-testid={`pdf-${r.id}`} className="text-xs px-3 py-1 rounded-full border border-border hover:bg-muted ml-1 text-blue-700 border-blue-500/40">PDF</a>
                     <button onClick={() => printInvoice(r, company)} className="text-xs px-3 py-1 rounded-full border border-border hover:bg-muted ml-1">Print</button>
                     <button onClick={async () => { if (window.confirm(`Delete ${r.invoice_no}?`)) { await billingApi.deleteInvoice(r.id); toast.success("Deleted"); load(); } }} className="w-8 h-8 rounded-md hover:bg-[hsl(var(--destructive))]/10 hover:text-[hsl(var(--destructive))] inline-flex items-center justify-center ml-1"><Trash2 className="w-3.5 h-3.5" /></button>
                   </td>
@@ -563,9 +564,10 @@ function InvoiceList() {
                   {outstanding > 0.5 && <div className="text-[10px] text-[hsl(var(--energy))]">Due {inr(outstanding)}</div>}
                 </div>
               </div>
-              <div className="mt-2 grid grid-cols-3 gap-1">
+              <div className="mt-2 grid grid-cols-4 gap-1">
                 <button onClick={() => setSelected(r)} className="h-8 rounded-lg border border-border text-xs">View</button>
                 <a href={billingApi.invoiceExcelUrl(r.id)} target="_blank" rel="noopener noreferrer" className="h-8 rounded-lg border border-border text-xs inline-flex items-center justify-center">Excel</a>
+                <a href={billingApi.invoicePdfUrl(r.id)} target="_blank" rel="noopener noreferrer" className="h-8 rounded-lg border border-blue-500/40 text-blue-700 text-xs inline-flex items-center justify-center">PDF</a>
                 <button onClick={() => printInvoice(r, company)} className="h-8 rounded-lg border border-border text-xs">Print</button>
               </div>
             </div>
@@ -1058,6 +1060,7 @@ function InvoiceView({ inv, company, onClose }) {
         <div className="flex items-center justify-between p-4 border-b border-border">
           <div><div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">Invoice</div><h3 className="font-heading text-lg font-bold">{inv.invoice_no}</h3></div>
           <div className="flex gap-2">
+            <a href={billingApi.invoicePdfUrl(inv.id)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-blue-500/40 text-blue-700 text-xs font-semibold"><Download className="w-3.5 h-3.5" /> PDF</a>
             <button onClick={() => printInvoice(inv, company)} className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-foreground text-background text-xs font-semibold"><Printer className="w-3.5 h-3.5" /> Print</button>
             <button onClick={onClose} className="w-9 h-9 rounded-md hover:bg-muted flex items-center justify-center"><X className="w-4 h-4" /></button>
           </div>

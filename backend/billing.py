@@ -762,6 +762,29 @@ async def delete_invoice(inv_id: str):
     return {"deleted": True}
 
 
+@billing_router.get("/invoices/{inv_id}/pdf")
+async def export_invoice_pdf(inv_id: str):
+    """Server-generated PDF using WeasyPrint. Uses the shared invoice_renderer
+    so output matches the browser print exactly."""
+    doc = await _db().invoices.find_one({"id": inv_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Not found")
+    company = await _db().company.find_one({"_id": "default"}) or {}
+    company.pop("_id", None)
+
+    from invoice_renderer import render_invoice_html
+    from weasyprint import HTML as WeasyHTML
+
+    html_str = render_invoice_html(doc, company)
+    pdf_bytes = WeasyHTML(string=html_str).write_pdf()
+    safe_no = doc["invoice_no"].replace("/", "_")
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{safe_no}.pdf"'},
+    )
+
+
 @billing_router.get("/invoices/{inv_id}/export")
 async def export_invoice_excel(inv_id: str):
     doc = await _db().invoices.find_one({"id": inv_id}, {"_id": 0})

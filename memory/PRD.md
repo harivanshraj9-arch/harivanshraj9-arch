@@ -602,3 +602,18 @@ Complete lifecycle test: Add `SM-LC-100` → create Approved `GP-001` → smart-
 - `/app/frontend/src/lib/invoiceRenderer.js` — NEW shared renderer (~350 lines)
 - `/app/frontend/src/lib/billingApi.js` — historicalPreview/Commit/History/TemplateUrl
 - `/app/frontend/src/pages/billing/BillingPage.jsx` — replaced legacy inline printInvoice, added Data Import tab + `HistoricalImport` component + `Stat` tile
+
+## Update — 2026-02-10 · PDF Download Button
+
+### Delivered
+- **`/api/billing/invoices/{id}/pdf`** — server-generated A4 PDF using **WeasyPrint 70.0** (installed + persisted in requirements.txt) driven by a new `/app/backend/invoice_renderer.py` that mirrors the JS renderer HTML → the PDF is a pixel-for-pixel match of the browser print preview.
+- **Blue "PDF" button** on every invoice row (desktop table + mobile card + Invoice detail modal) — one-click download, filename set to `<invoice_no>.pdf` (slashes converted to underscores).
+- **`billingApi.invoicePdfUrl(id)`** helper — canonical URL builder so any future page can add PDF export in one line.
+- Verified: valid `%PDF-1.7` bytes for `manual`, `historical`, `partly paid`, and `unpaid` invoices. Layout, badges, HSN table, SGST/CGST split, In Words, signatory all render correctly.
+
+### Files touched
+- `/app/backend/invoice_renderer.py` (NEW ~450 lines)
+- `/app/backend/billing.py` — added `/pdf` endpoint using WeasyPrint
+- `/app/backend/requirements.txt` — pip freeze after weasyprint install
+- `/app/frontend/src/lib/billingApi.js` — invoicePdfUrl helper
+- `/app/frontend/src/pages/billing/BillingPage.jsx` — PDF buttons added to desktop row, mobile card, invoice detail modal
